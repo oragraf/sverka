@@ -195,7 +195,10 @@ declare
    pragma exception_init (exc#no_table, -942);
    c_err               varchar2 (2000 char);
 
-   procedure wl (p_tbl it$$enlarge_log.orig_tbl_name%type, p_ddl it$$enlarge_log.ddl_dml%type, p_err it$$enlarge_log.error_message%type)
+   procedure wl (p_bank_code    it$$enlarge_log.bank_code%type
+                ,p_tbl          it$$enlarge_log.orig_tbl_name%type
+                ,p_ddl          it$$enlarge_log.ddl_dml%type
+                ,p_err          it$$enlarge_log.error_message%type)
    as
       pragma autonomous_transaction;
    begin
@@ -205,7 +208,7 @@ declare
                                   ,ddl_dml
                                   ,error_message)
            values (&&script_step.
-                  ,null
+                  ,p_bank_code
                   ,p_tbl
                   ,p_ddl
                   ,p_err);
@@ -222,7 +225,10 @@ begin
       begin
          execute immediate t.trunc_ddl;
 
-         wl (t.orig_tbl_name, t.trunc_ddl, null);
+         wl (null
+            ,t.orig_tbl_name
+            ,t.trunc_ddl
+            ,null);
       exception
          when exc#resource_busy
          then
@@ -232,12 +238,18 @@ begin
                || ' заблокирована и не может быть очищена. Устраните блокировку и запустите скрипт заново.';
             DBMS_OUTPUT.put_line (c_err);
 
-            wl (t.orig_tbl_name, t.trunc_ddl, c_err);
+            wl (null
+               ,t.orig_tbl_name
+               ,t.trunc_ddl
+               ,c_err);
          when exc#no_table
          then
             execute immediate t.create_ddl;
 
-            wl (t.orig_tbl_name, t.create_ddl, null);
+            wl (null
+               ,t.orig_tbl_name
+               ,t.create_ddl
+               ,null);
       end;
    end loop;
 
@@ -264,7 +276,10 @@ begin
          loop
             begin
                ddl_pkg.alter_table (c.alter_ddl);
-               wl (c.orig_tbl_name, c.alter_ddl, null);
+               wl (null
+                  ,c.orig_tbl_name
+                  ,c.alter_ddl
+                  ,null);
             exception
                when exc#dep_exists
                then
@@ -273,6 +288,34 @@ begin
          end loop;
 
          try_count := try_count + 1;
+      end loop;
+   end;
+
+   begin
+      DBMS_OUTPUT.put_line (
+         'Осуществляем слияние всех подсекций по секциям всех тербанков в одну секцию по умолчанию.');
+
+      for b in (select * from it$$bank_code)
+      loop
+         for s in (  select *
+                       from (select t.orig_tbl_name, tp.partition_name, tsp.subpartition_name, tsp.subpartition_position
+                                   ,'ALTER TABLE ' || t.orig_tbl_name || ' MERGE SUBPARTITIONS ' || lag (tsp.subpartition_name) over (partition by t.orig_tbl_name order by tp.partition_position, tsp.subpartition_position) || ',' || tsp.subpartition_name || ' INTO SUBPARTITION ' || tsp.subpartition_name csql
+                               from it$$dup_tables t
+                                    inner join user_tab_partitions tp on tp.table_name = t.orig_tbl_name
+                                    inner join user_tab_subpartitions tsp on tsp.partition_name = tp.partition_name and tsp.table_name = tp.table_name
+                              where tp.partition_name = 'TB' || b.bank_code) q
+                      where subpartition_position > 1
+                   order by orig_tbl_name, subpartition_position)
+         loop
+            DBMS_OUTPUT.put_line (s.csql || ';');
+
+            execute immediate s.csql;
+
+            wl (b.bank_code
+               ,c.orig_tbl_name
+               ,s.csql
+               ,null);
+         end loop;
       end loop;
    end;
 end;
