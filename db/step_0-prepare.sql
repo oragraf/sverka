@@ -75,10 +75,10 @@ merge into it$$step t
                   ,'&&script_full_name.' script_name
               from dual
             union all
-            select 1 step_no, 'Этап размножения данных по одному ТБ.' description, 'step_1_enlarge' script_name from dual
+            select 1 step_no, 'Этап размножения данных по одному ТБ.' description, 'step_1-enlarge' script_name from dual
             union all
             select 3 step_no, 'Завершительный этап для всех ТБ. Выполняется один раз.' description
-                  ,'step_2_final' script_name
+                  ,'step_2-final' script_name
               from dual) s
         on (s.step_no = t.step_no)
 when matched
