@@ -6,7 +6,6 @@ define script_step='0'
 define script_name='prepare'
 define script_full_name='step_&&SCRIPT_STEP.-&&SCRIPT_NAME.'
 define script_desc='Скрипт осуществляет удаление ограничений целостности в БД, создание промежуточных объектов, необходимых для работы. Запускается один раз.'
-whenever sqlerror exit
 
 @@utl_head.sql
 @@it$$check.sql
@@ -59,7 +58,7 @@ tablespace &&ts.');
    ddl_pkg.alter_table ('alter table it$$step add constraint it$$step_pk primary key (step_no) using index tablespace &&ts.');
    ddl_pkg.alter_table ('alter table it$$bank_code add constraint it$$bank_code_pk primary key (bank_code) using index tablespace &&ts.');
    ddl_pkg.alter_table ('alter table it$$dup_tables add constraint it$$dup_tables_pk primary key (orig_tbl_name) using index tablespace &&ts.');
-   ddl_pkg.alter_table ('alter table it$$enlarge_log add constraint it$$enlarge_log_pk primary key (timemark) using index tablespace &&ts.');
+   --ddl_pkg.alter_table ('alter table it$$enlarge_log add constraint it$$enlarge_log_pk primary key (timemark) using index tablespace &&ts.');
    ddl_pkg.alter_table ('alter table it$$bank_code add constraint it$$bank_code_fk foreign key (last_ok_step) references it$$step(step_no)');
    ddl_pkg.alter_table ('alter table it$$enlarge_log add constraint it$$enlarge_log_fk1 foreign key (bank_code) references it$$bank_code(bank_code)');
    ddl_pkg.alter_table ('alter table it$$enlarge_log add constraint it$$enlarge_log_fk2 foreign key (orig_tbl_name) references it$$dup_tables(orig_tbl_name)');
@@ -291,6 +290,8 @@ begin
       end loop;
    end;
 
+   DBMS_OUTPUT.enable (10000000);
+
    begin
       DBMS_OUTPUT.put_line (
          'Осуществляем слияние всех подсекций по секциям всех тербанков в одну секцию по умолчанию.');
@@ -312,7 +313,7 @@ begin
             execute immediate s.csql;
 
             wl (b.bank_code
-               ,c.orig_tbl_name
+               ,s.orig_tbl_name
                ,s.csql
                ,null);
          end loop;
