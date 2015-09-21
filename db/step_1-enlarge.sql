@@ -31,10 +31,10 @@ begin
    DBMS_OUTPUT.enable (1000000);
 
    for t in (select *
-               from it$dup_tables j)
+               from it$$dup_tables j)
    loop
       sel := 'select max(';
-      fr := ' from ' || t.ttbl;
+      fr := ' from ' || t.orig_tbl_name;
 
       for c
          in (  select tc.table_name, tc.column_id rn, row_number () over (partition by tc.table_name order by tc.column_id desc) drn, tc.column_name
@@ -42,7 +42,7 @@ begin
                  from user_tab_columns tc
                       left join (user_cons_columns cc inner join user_constraints c on cc.constraint_name = c.constraint_name and c.constraint_type = 'P')
                          on cc.table_name = tc.table_name and cc.column_name = tc.column_name
-                where tc.table_name = t.ttbl
+                where tc.table_name = t.orig_tbl_name
              order by tc.table_name, tc.column_id)
       loop
          if c.position is not null
@@ -68,16 +68,16 @@ begin
    pl ('Самое максимальное значение ' || to_char (prev_imax));
 
    for t in (select *
-               from it$dup_tables j)
+               from it$$dup_tables j)
    loop
-      cdml := 'INSERT /*+ APPEND */ INTO ' || t.ptbl || ' (';
+      cdml := 'INSERT /*+ APPEND */ INTO ' || t.tmp_tbl_name || ' (';
       col_list := '';
       val_list := '';
 
       for c in (  select tc.table_name, tc.column_id rn, row_number () over (partition by tc.table_name order by tc.column_id desc) drn, tc.column_name
                         ,case when t.cn like '%,' || tc.column_name || ',%' then '+' || to_char (prev_imax) else '' end diff
                     from user_tab_columns tc
-                   where tc.table_name = t.ttbl
+                   where tc.table_name = t.orig_tbl_name
                 order by tc.table_name, tc.column_id)
       loop
          col_list := col_list || case when c.rn != 1 then ',' end || '"' || c.column_name || '"';
@@ -87,7 +87,7 @@ begin
             || case when c.column_name = 'BANK_CODE' then '''&&PART.''' else '"' || c.column_name || '"' || c.diff end;
       end loop;
 
-      cdml := cdml || col_list || ') SELECT ' || val_list || ' FROM ' || t.ttbl || ' WHERE BANK_CODE=''99'';' || 'COMMIT;';
+      cdml := cdml || col_list || ') SELECT ' || val_list || ' FROM ' || t.orig_tbl_name || ' WHERE BANK_CODE=''99'';' || 'COMMIT;';
 
       declare
          v#job_name                        varchar2 (65 char);
@@ -95,7 +95,7 @@ begin
          exc#job_doesnot_exists            exception;
          pragma exception_init (exc#job_doesnot_exists, -27475);
       begin
-         v#job_name := 'J$' || t.ttbl;
+         v#job_name := 'J$' || t.orig_tbl_name;
 
          begin
             DBMS_SCHEDULER.drop_job (job_name => v#job_name, force => true);
@@ -131,13 +131,13 @@ declare
    exc#check_failed   exception;
    pragma exception_init (exc#check_failed, -14281);
 begin
-   for r in (  select t.ttbl, tp.partition_name, tsp.subpartition_name, tsp.subpartition_position
-                     ,'ALTER TABLE ' || t.ttbl || ' EXCHANGE SUBPARTITION ' || tsp.subpartition_name || ' WITH TABLE ' || t.ptbl csql
-                 from it$dup_tables t
-                      inner join user_tab_partitions tp on tp.table_name = t.ttbl
+   for r in (  select t.orig_tbl_name, tp.partition_name, tsp.subpartition_name, tsp.subpartition_position
+                     ,'ALTER TABLE ' || t.orig_tbl_name || ' EXCHANGE SUBPARTITION ' || tsp.subpartition_name || ' WITH TABLE ' || t.tmp_tbl_name csql
+                 from it$$dup_tables t
+                      inner join user_tab_partitions tp on tp.table_name = t.orig_tbl_name
                       inner join user_tab_subpartitions tsp on tsp.partition_name = tp.partition_name and tsp.table_name = tp.table_name
-                where tp.partition_name = 'TB&&part.' and t.ttbl != 'INC_OPER_CLOB'
-             order by ttbl)
+                where tp.partition_name = 'TB&&part.' and t.orig_tbl_name != 'INC_OPER_CLOB'
+             order by orig_tbl_name)
    loop
       DBMS_OUTPUT.put_line (r.csql || ';');
 

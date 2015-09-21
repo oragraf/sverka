@@ -136,10 +136,10 @@ PROMPT Удаление $-таблиц для сгенерированных искусственных данных и перестройка 
 
 BEGIN
    BEGIN
-      FOR t IN (SELECT * FROM it$dup_tables)
+      FOR t IN (SELECT * FROM it$$dup_tables)
       LOOP
-         DDL_PKG.DROP_TABLE (t.ptbl);
-         PKG_MANAGE_PARTITIONS.REBUILD_INDEXES (P_TABLE_NAME => t.ttbl, P_TABSPACE => NULL);
+         DDL_PKG.DROP_TABLE (t.tmp_tbl_name);
+         PKG_MANAGE_PARTITIONS.REBUILD_INDEXES (P_TABLE_NAME => t.orig_tbl_name, P_TABSPACE => NULL);
       END LOOP;
    END;
 
@@ -175,7 +175,7 @@ begin
                                 from user_constraints c
                           start with c.r_constraint_name is null
                           connect by prior c.constraint_name = c.r_constraint_name) q
-                         inner join it$dup_tables t on table_name = t.orig_tbl_name
+                         inner join it$$dup_tables t on table_name = t.orig_tbl_name
                    where status = 'DISABLED'
                 order by rn)
       loop
@@ -200,7 +200,7 @@ declare
    v_altr_stmnt   varchar2 (2000);
 begin
    for tt in (select *
-                from it$dup_tables t)
+                from it$$dup_tables t)
    loop
       for c in (  select q.table_name, status, consn, constraint_name, constraint_type
                         ,'ALTER TABLE ' || q.table_name || ' MODIFY CONSTRAINT ' || constraint_name || ' VALIDATE ' alter_ddl
