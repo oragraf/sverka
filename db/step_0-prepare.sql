@@ -168,7 +168,8 @@ merge into it$$bank_code t
         on (s.bank_code = t.bank_code)
 when matched
 then
-   update set ini_size = s.bytes where t.is_process =1;
+   update set ini_size = s.bytes
+           where t.is_process = 1;
 
 prompt Проставим исходный суммарный размер сегментов в разрезе таблиц
 
@@ -204,6 +205,8 @@ as
    procedure checkoff_cons;
 
    procedure merge_part;
+
+   procedure sync;
 end;
 /
 
@@ -346,6 +349,31 @@ as
          end loop;
       end loop;
    end;
+
+   function is_job_exists
+      return boolean
+   as
+      i   number;
+   begin
+      select count (*)
+        into i
+        from dual
+       where exists
+                (select j.job_name, j.state
+                   from user_scheduler_jobs j
+                  where j.job_name like 'IT$$%' and j.state = 'RUNNING');
+
+      return i > 0;
+   end;
+
+   procedure sync                                                            --(p_step it$$enlarge_log.step_no%type, p_bank_code it$$enlarge_log.bank_code%type)
+   as
+   begin
+      while (is_job_exists)
+      loop
+         DBMS_LOCK.sleep (60);                                                                                                                 -- спим 60 секунд
+      end loop;
+   end sync;
 end;
 /
 
