@@ -226,11 +226,11 @@ CREATE OR REPLACE PACKAGE BODY it$$ddl as
   begin
     return non( p_schema_name || '.' || p_object_name );
   end;
-  procedure alter_table( p_ddl in varchar2 ) as
+  procedure alter_table(p_bank varchar2, p_tbl varchar2, p_ddl in varchar2 ) as
   begin
-    info( p_ddl || '; ' );
+--    info( p_ddl || '; ' );
     execute immediate p_ddl;
-    info( 'Успешно...' );
+    info( p_ddl || '; -- Успешно...' );
   exception
     when exc#already_exists or exc#invalid_identifier or exc#constraint_exists or exc#column_exists then
       info( 'Уже существует...' );

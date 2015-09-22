@@ -1,14 +1,11 @@
-rem TS - табличное пространство, в котором будут создаваться таблицы для миграции
---define ts='&1'
-define ts=sbrftbs
-----------------------------------------------
 define script_step='0'
 define script_name='prepare'
 define script_full_name='step_&&SCRIPT_STEP.-&&SCRIPT_NAME.'
 define script_desc='Скрипт осуществляет удаление ограничений целостности в БД, создание промежуточных объектов, необходимых для работы. Запускается один раз.'
 
 @@utl_head.sql
-@@it$$check.sql
+
+connect &&user_owner./&&user_pwd.@&&tns_name.
 
 prompt Создание списка таблиц для размножения данных
 
@@ -29,6 +26,7 @@ TABLESPACE &&TS.');
    ddl_pkg.create_table (p_table_name => 'it$$bank_code', p_ddl => 'create table it$$bank_code
 (
    bank_code      varchar2 (2 char)
+  ,is_process     number(1) default 0
   ,last_ok_step   number
   ,ini_size       number default 0
   ,final_size     number default 0
@@ -142,7 +140,7 @@ then
        values (s.orig_tbl_name, s.tmp_tbl_name, s.cn);
 
 merge into it$$bank_code t
-     using (select b.bank_code
+     using (select b.bank_code, case when bank_code = 99 or row_number () over (order by null) <= &&ratio. - 1 then 1 else 0 end is_process
               from dic_bank b
              where active = 1) s
         on (s.bank_code = t.bank_code)
@@ -151,11 +149,13 @@ then
    insert     (bank_code
               ,last_ok_step
               ,ini_size
-              ,final_size)
+              ,final_size
+              ,is_process)
        values (s.bank_code
               ,null
               ,0
-              ,0);
+              ,0
+              ,s.is_process);
 
 prompt Проставим исходный суммарный размер сегментов в разрезе банков
 
@@ -168,7 +168,7 @@ merge into it$$bank_code t
         on (s.bank_code = t.bank_code)
 when matched
 then
-   update set ini_size = s.bytes;
+   update set ini_size = s.bytes where t.is_process =1;
 
 prompt Проставим исходный суммарный размер сегментов в разрезе таблиц
 
@@ -185,15 +185,30 @@ then
 
 commit;
 
-declare
+create or replace package it$$utl
+as
    exn#resource_busy   number := -54;
    exc#resource_busy   exception;
    pragma exception_init (exc#resource_busy, -54);
    exn#no_table        number := -942;
    exc#no_table        exception;
    pragma exception_init (exc#no_table, -942);
-   c_err               varchar2 (2000 char);
 
+   procedure wl (p_bank_code    it$$enlarge_log.bank_code%type
+                ,p_tbl          it$$enlarge_log.orig_tbl_name%type
+                ,p_ddl          it$$enlarge_log.ddl_dml%type
+                ,p_err          it$$enlarge_log.error_message%type);
+
+   procedure trn;
+
+   procedure checkoff_cons;
+
+   procedure merge_part;
+end;
+/
+
+create or replace package body it$$utl
+as
    procedure wl (p_bank_code    it$$enlarge_log.bank_code%type
                 ,p_tbl          it$$enlarge_log.orig_tbl_name%type
                 ,p_ddl          it$$enlarge_log.ddl_dml%type
@@ -214,54 +229,61 @@ declare
 
       commit;
    end;
-begin
-   DBMS_OUTPUT.put_line ('Создание $-таблиц для сгенерированных искусственных данных');
 
-   for t in (select tt.orig_tbl_name, tt.tmp_tbl_name, 'TRUNCATE TABLE ' || tt.tmp_tbl_name || ' REUSE STORAGE' trunc_ddl
-                   ,'CREATE TABLE ' || tt.tmp_tbl_name || ' TABLESPACE &&TS. AS SELECT * FROM ' || tt.orig_tbl_name || ' WHERE 1=0' create_ddl
-               from it$$dup_tables tt)
-   loop
-      begin
-         execute immediate t.trunc_ddl;
+   procedure trn
+   as
+      c_err   varchar2 (2000 char);
+   begin
+      DBMS_OUTPUT.enable (10000000);
+      DBMS_OUTPUT.put_line ('Создание $-таблиц для сгенерированных искусственных данных');
 
-         wl (null
-            ,t.orig_tbl_name
-            ,t.trunc_ddl
-            ,null);
-      exception
-         when exc#resource_busy
-         then
-            c_err :=
-                  'Таблица '
-               || t.tmp_tbl_name
-               || ' заблокирована и не может быть очищена. Устраните блокировку и запустите скрипт заново.';
-            DBMS_OUTPUT.put_line (c_err);
+      for t in (select tt.orig_tbl_name, tt.tmp_tbl_name, 'TRUNCATE TABLE ' || tt.tmp_tbl_name || ' REUSE STORAGE' trunc_ddl
+                      ,'CREATE TABLE ' || tt.tmp_tbl_name || ' TABLESPACE &&TS. AS SELECT * FROM ' || tt.orig_tbl_name || ' WHERE 1=0' create_ddl
+                  from it$$dup_tables tt)
+      loop
+         begin
+            execute immediate t.trunc_ddl;
 
             wl (null
                ,t.orig_tbl_name
                ,t.trunc_ddl
-               ,c_err);
-         when exc#no_table
-         then
-            execute immediate t.create_ddl;
-
-            wl (null
-               ,t.orig_tbl_name
-               ,t.create_ddl
                ,null);
-      end;
-   end loop;
+         exception
+            when exc#resource_busy
+            then
+               c_err :=
+                     'Таблица '
+                  || t.tmp_tbl_name
+                  || ' заблокирована и не может быть очищена. Устраните блокировку и запустите скрипт заново.';
+               DBMS_OUTPUT.put_line (c_err);
 
+               wl (null
+                  ,t.orig_tbl_name
+                  ,t.trunc_ddl
+                  ,c_err);
+            when exc#no_table
+            then
+               execute immediate t.create_ddl;
 
-   DBMS_OUTPUT.put_line ('Отключение ограничений целостности на таблицах');
+               wl (null
+                  ,t.orig_tbl_name
+                  ,t.create_ddl
+                  ,null);
+         end;
+      end loop;
+   end;
 
-   declare
+   procedure checkoff_cons
+   as
       should_repeat    boolean := false;
       try_count        number := 0;
       exn#dep_exists   number := -2297;
       exc#dep_exists   exception;
       pragma exception_init (exc#dep_exists, -2297);
    begin
+      DBMS_OUTPUT.enable (10000000);
+      DBMS_OUTPUT.put_line ('Отключение ограничений целостности на таблицах');
+
       while (should_repeat = true or try_count < 10)
       loop
          should_repeat := false;
@@ -290,13 +312,18 @@ begin
       end loop;
    end;
 
-   DBMS_OUTPUT.enable (10000000);
 
+
+   procedure merge_part
+   as
    begin
+      DBMS_OUTPUT.enable (10000000);
       DBMS_OUTPUT.put_line (
          'Осуществляем слияние всех подсекций по секциям всех тербанков в одну секцию по умолчанию.');
 
-      for b in (select * from it$$bank_code)
+      for b in (select *
+                  from it$$bank_code
+                 where is_process = 1)
       loop
          for s in (  select *
                        from (select t.orig_tbl_name, tp.partition_name, tsp.subpartition_name, tsp.subpartition_position
@@ -322,16 +349,11 @@ begin
 end;
 /
 
-prompt Проставим признак завершения этапа &&script_step. для банков
+exec it$$utl.trn;
 
-update it$$bank_code t
-   set t.last_ok_step = &&script_step.;
+exec it$$utl.checkoff_cons;
 
-prompt Проставим признак завершения этапа &&script_step. для этапа
-
-update it$$step
-   set completed = systimestamp
- where step_no = to_number (&&script_step.);
+exec it$$utl.merge_part;
 
 @@utl_foot.sql
 undefine ts

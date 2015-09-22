@@ -6,7 +6,6 @@ define script_full_name='step_&&SCRIPT_STEP.-&&SCRIPT_NAME.'
 define script_desc='Скрипт перекидывает сиквенсы в актуальные значения. Запускается один раз на все тербанки.'
 
 @@utl_head.sql
-@@it$$check.sql
 
 declare
    cursor it$$dup_tables_c
@@ -249,7 +248,7 @@ begin
          exc#job_doesnot_exists            exception;
          pragma exception_init (exc#job_doesnot_exists, -27475);
       begin
-         v#job_name := 'VC$' || tt.orig_tbl_name;
+         v#job_name := 'IT$$' || tt.orig_tbl_name;
 
          begin
             DBMS_SCHEDULER.drop_job (job_name => v#job_name, force => true);
@@ -270,7 +269,7 @@ begin
                             || chr (10)
                             || 'Самоудаляемое задание для распараллеливания валидации ограничений целостности'
            ,auto_drop    => false
-           ,enabled      => true);
+           ,enabled      => false);
          DBMS_SCHEDULER.disable (name => v#job_name);
          DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'RESTARTABLE', value => false);
          DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'JOB_PRIORITY', value => 3);
@@ -279,12 +278,37 @@ begin
 
       v_altr_stmnt := '';
    end loop;
+   -- точка синхронизации. Нужно дождаться, пока джобы отработают
 end;
 /
 
-prompt Удаление списка таблиц для размножения данных
-drop view it$$dup_tables;
+prompt Проставим исходный суммарный размер сегментов в разрезе банков
 
+merge into it$$bank_code t
+     using (  select substr (sp.partition_name, 3, 2) bank_code, sum (nvl (s.bytes, 0)) bytes
+                from user_tab_subpartitions sp
+                     inner join it$$dup_tables t on t.orig_tbl_name = sp.table_name
+                     left join user_segments s on sp.table_name = s.segment_name
+            group by substr (sp.partition_name, 3, 2)) s
+        on (s.bank_code = t.bank_code)
+when matched
+then
+   update set final_size = s.bytes;
+
+prompt Проставим исходный суммарный размер сегментов в разрезе таблиц
+
+merge into it$$dup_tables t
+     using (  select sp.table_name, sum (nvl (s.bytes, 0)) bytes
+                from user_tab_subpartitions sp
+                     inner join it$$dup_tables t on t.orig_tbl_name = sp.table_name
+                     left join user_segments s on sp.table_name = s.segment_name
+            group by sp.table_name) s
+        on (t.orig_tbl_name = s.table_name)
+when matched
+then
+   update set final_size = s.bytes;
+
+commit;
 
 @@utl_foot.sql
 

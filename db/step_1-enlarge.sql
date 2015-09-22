@@ -6,7 +6,6 @@ define script_full_name='step_&&SCRIPT_STEP.-&&SCRIPT_NAME.'
 define script_desc='Скрипт выполняет основную работу по увеличению объема партиций.'
 
 @@utl_head.sql
-@@it$$check.sql
 --------------
 
 declare
