@@ -11,8 +11,7 @@ declare
    cursor it$$dup_tables_c
    is
       select orig_tbl_name, sequence_name, pk_col, row_number () over (partition by sequence_name order by 1) rn
-        from (select it$$dup_tables.orig_tbl_name
-                    ,case when it$$dup_tables.orig_tbl_name = 'INC_OPER_INFO' then 'SEQ_INCIDENT' else s.sequence_name end sequence_name
+        from (select it$$dup_tables.orig_tbl_name, case when it$$dup_tables.orig_tbl_name = 'INC_OPER_INFO' then 'SEQ_INCIDENT' else s.sequence_name end sequence_name
                     ,cc.column_name as pk_col
                 from it$$dup_tables
                      inner join user_constraints c on (it$$dup_tables.orig_tbl_name = c.table_name and c.constraint_type = 'P')
@@ -87,7 +86,7 @@ declare
          end if;
 
          -- возвращаем cache_size и increment_by
-         sql_str := 'alter sequence ' || p_owner || '.' || p_name || ' increment by ' || to_char (l_increment)          --|| ' minvalue ' || to_char(l_curr_val)
+         sql_str := 'alter sequence ' || p_owner || '.' || p_name || ' increment by ' || to_char (l_increment)                              --|| ' minvalue ' || to_char(l_curr_val)
                                                                                                               || l_cache;
 
          execute immediate sql_str;
@@ -120,7 +119,7 @@ begin
             alter_seq (owner => v_owner, seq_name => r.sequence_name, need_val => seq_need_val_tab (r.sequence_name));
          elsif r.rn > 1 and seq_need_val_tab (r.sequence_name) > v_max_id
          then
-            null;                                                                                                        -- ничего не делать, все уже перекинуто
+            null;                                                                                                                            -- ничего не делать, все уже перекинуто
          end if;
       exception
          when others
@@ -131,19 +130,19 @@ begin
 end change_seq_val;
 /
 
-PROMPT Удаление $-таблиц для сгенерированных искусственных данных и перестройка индексов
+prompt Удаление $-таблиц для сгенерированных искусственных данных и перестройка индексов
 
-BEGIN
-   BEGIN
-      FOR t IN (SELECT * FROM it$$dup_tables)
-      LOOP
-         DDL_PKG.DROP_TABLE (t.tmp_tbl_name);
-         PKG_MANAGE_PARTITIONS.REBUILD_INDEXES (P_TABLE_NAME => t.orig_tbl_name, P_TABSPACE => NULL);
-      END LOOP;
-   END;
+begin
+   begin
+      for t in (select * from it$$dup_tables)
+      loop
+         ddl_pkg.drop_table (t.tmp_tbl_name);
+         pkg_manage_partitions.rebuild_indexes (p_table_name => t.orig_tbl_name, p_tabspace => null);
+      end loop;
+   end;
 
-   NULL;
-END;
+   null;
+end;
 /
 
 prompt Этап 1. Все констрайнты переводим в enabled
@@ -169,8 +168,7 @@ begin
 
       for c in (  select t.orig_tbl_name, status, consn, constraint_name, constraint_type
                         ,'ALTER TABLE ' || t.orig_tbl_name || ' MODIFY CONSTRAINT ' || constraint_name || ' ENABLE ' || 'NOVALIDATE' alter_ddl
-                    from (    select c.table_name, lpad (' ', 8 * (level - 1)) || c.constraint_name consn, constraint_name, c.status, c.constraint_type, generated
-                                    ,level lev, rownum rn
+                    from (    select c.table_name, lpad (' ', 8 * (level - 1)) || c.constraint_name consn, constraint_name, c.status, c.constraint_type, generated, level lev, rownum rn
                                 from user_constraints c
                           start with c.r_constraint_name is null
                           connect by prior c.constraint_name = c.r_constraint_name) q
@@ -203,8 +201,8 @@ begin
    loop
       for c in (  select q.table_name, status, consn, constraint_name, constraint_type
                         ,'ALTER TABLE ' || q.table_name || ' MODIFY CONSTRAINT ' || constraint_name || ' VALIDATE ' alter_ddl
-                    from (    select c.table_name, lpad (' ', 8 * (level - 1)) || c.constraint_name consn, constraint_name, c.status, c.constraint_type, generated
-                                    ,level lev, validated, rownum rn
+                    from (    select c.table_name, lpad (' ', 8 * (level - 1)) || c.constraint_name consn, constraint_name, c.status, c.constraint_type, generated, level lev, validated
+                                    ,rownum rn
                                 from user_constraints c
                           start with c.r_constraint_name is null
                           connect by prior c.constraint_name = c.r_constraint_name) q
@@ -265,7 +263,7 @@ begin
            ,job_class    => 'DEFAULT_JOB_CLASS'
            ,job_type     => 'PLSQL_BLOCK'
            ,job_action   => sql_stmnt
-           ,comments     =>    'ЗАО Ай-Теко, 2013'
+           ,comments     =>    'ЗАО Ай-Теко, 2015'
                             || chr (10)
                             || 'Самоудаляемое задание для распараллеливания валидации ограничений целостности'
            ,auto_drop    => false
@@ -278,7 +276,9 @@ begin
 
       v_altr_stmnt := '';
    end loop;
+
    -- точка синхронизации. Нужно дождаться, пока джобы отработают
+   it$$utl.sync;
 end;
 /
 

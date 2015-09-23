@@ -2,7 +2,7 @@ prompt ѕроставим признак завершени€ этапа &&script_step. дл€ банков
 
 update it$$bank_code t
    set t.last_ok_step = &&script_step.
- where is_process = 1;
+ where is_process = 1 and (last_ok_step is null or last_ok_step < &&script_step.);
 
 prompt ѕроставим признак завершени€ этапа &&script_step. дл€ этапа
 
@@ -18,3 +18,4 @@ SPOOL OFF
 undefine script_step
 undefine script_name
 undefine script_full_name
+undefine ts

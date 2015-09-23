@@ -10,6 +10,7 @@ define USER_OWNER=SV
 define USER_PWD  =sv
 define TNS_NAME  =ORCL
 Prompt ============================================================================================
+define def_bank  =99
 rem Далее ничего исправлять не нужно!!!!
 define ts
 define ratio

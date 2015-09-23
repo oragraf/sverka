@@ -5,8 +5,6 @@ define script_desc='Скрипт осуществляет удаление ограничений целостности в БД, с
 
 @@utl_head.sql
 
-connect &&user_owner./&&user_pwd.@&&tns_name.
-
 prompt Создание списка таблиц для размножения данных
 
 begin
@@ -30,6 +28,7 @@ TABLESPACE &&TS.');
   ,last_ok_step   number
   ,ini_size       number default 0
   ,final_size     number default 0
+  ,is_source      number(1)
 )
 tablespace &&ts.');
    ddl_pkg.create_table (p_table_name => 'it$$dup_tables', p_ddl => 'create table it$$dup_tables
@@ -65,6 +64,8 @@ tablespace &&ts.');
    ddl_pkg.comment_tab (
       'it$$bank_code'
      ,'Служебная таблица для целей распучивания БД. Перечень партиций, они же банковские коды.');
+   ddl_pkg.alter_table ('alter table it$$bank_code add ( constraint it$$bank_code_c01 check (is_source is null or is_source=1) enable validate)');
+   ddl_pkg.alter_table ('alter table it$$bank_code add ( unique (is_source) using index tablespace &&ts. )');
 end;
 /
 
@@ -75,8 +76,7 @@ merge into it$$step t
             union all
             select 1 step_no, 'Этап размножения данных по одному ТБ.' description, 'step_1-enlarge' script_name from dual
             union all
-            select 3 step_no, 'Завершительный этап для всех ТБ. Выполняется один раз.' description
-                  ,'step_2-final' script_name
+            select 2 step_no, 'Завершительный этап для всех ТБ. Выполняется один раз.' description, 'step_2-final' script_name
               from dual) s
         on (s.step_no = t.step_no)
 when matched
@@ -140,7 +140,8 @@ then
        values (s.orig_tbl_name, s.tmp_tbl_name, s.cn);
 
 merge into it$$bank_code t
-     using (select b.bank_code, case when bank_code = 99 or row_number () over (order by null) <= &&ratio. - 1 then 1 else 0 end is_process
+     using (select b.bank_code, case when bank_code = &&def_bank. or row_number () over (order by null) <= &&ratio. - 1 then 1 else 0 end is_process
+                  ,decode (bank_code, &&def_bank., 1) is_source
               from dic_bank b
              where active = 1) s
         on (s.bank_code = t.bank_code)
@@ -150,12 +151,14 @@ then
               ,last_ok_step
               ,ini_size
               ,final_size
-              ,is_process)
+              ,is_process
+              ,is_source)
        values (s.bank_code
               ,null
               ,0
               ,0
-              ,s.is_process);
+              ,s.is_process
+              ,s.is_source);
 
 prompt Проставим исходный суммарный размер сегментов в разрезе банков
 
@@ -195,24 +198,39 @@ as
    exc#no_table        exception;
    pragma exception_init (exc#no_table, -942);
 
-   procedure wl (p_bank_code    it$$enlarge_log.bank_code%type
+   procedure pl (s in varchar2);
+
+   procedure wl (p_step         it$$step.step_no%type
+                ,p_bank_code    it$$enlarge_log.bank_code%type
                 ,p_tbl          it$$enlarge_log.orig_tbl_name%type
                 ,p_ddl          it$$enlarge_log.ddl_dml%type
                 ,p_err          it$$enlarge_log.error_message%type);
 
-   procedure trn;
+   procedure trn (p_step it$$step.step_no%type);
 
-   procedure checkoff_cons;
+   procedure checkoff_cons (p_step it$$step.step_no%type);
 
-   procedure merge_part;
+   procedure merge_part (p_step it$$step.step_no%type);
 
    procedure sync;
+
+   procedure exch_part (p_bank_code it$$bank_code.bank_code%type);
+
+   function get_max
+      return number;
 end;
 /
 
 create or replace package body it$$utl
 as
-   procedure wl (p_bank_code    it$$enlarge_log.bank_code%type
+   procedure pl (s in varchar2)
+   as
+   begin
+      DBMS_OUTPUT.put_line (s);
+   end;
+
+   procedure wl (p_step         it$$step.step_no%type
+                ,p_bank_code    it$$enlarge_log.bank_code%type
                 ,p_tbl          it$$enlarge_log.orig_tbl_name%type
                 ,p_ddl          it$$enlarge_log.ddl_dml%type
                 ,p_err          it$$enlarge_log.error_message%type)
@@ -224,7 +242,7 @@ as
                                   ,orig_tbl_name
                                   ,ddl_dml
                                   ,error_message)
-           values (&&script_step.
+           values (p_step
                   ,p_bank_code
                   ,p_tbl
                   ,p_ddl
@@ -233,7 +251,7 @@ as
       commit;
    end;
 
-   procedure trn
+   procedure trn (p_step it$$step.step_no%type)
    as
       c_err   varchar2 (2000 char);
    begin
@@ -247,7 +265,8 @@ as
          begin
             execute immediate t.trunc_ddl;
 
-            wl (null
+            wl (p_step
+               ,null
                ,t.orig_tbl_name
                ,t.trunc_ddl
                ,null);
@@ -260,7 +279,8 @@ as
                   || ' заблокирована и не может быть очищена. Устраните блокировку и запустите скрипт заново.';
                DBMS_OUTPUT.put_line (c_err);
 
-               wl (null
+               wl (p_step
+                  ,null
                   ,t.orig_tbl_name
                   ,t.trunc_ddl
                   ,c_err);
@@ -268,7 +288,8 @@ as
             then
                execute immediate t.create_ddl;
 
-               wl (null
+               wl (p_step
+                  ,null
                   ,t.orig_tbl_name
                   ,t.create_ddl
                   ,null);
@@ -276,7 +297,7 @@ as
       end loop;
    end;
 
-   procedure checkoff_cons
+   procedure checkoff_cons (p_step it$$step.step_no%type)
    as
       should_repeat    boolean := false;
       try_count        number := 0;
@@ -291,16 +312,14 @@ as
       loop
          should_repeat := false;
 
-         for c
-            in (select 'ALTER TABLE ' || c.table_name || ' MODIFY CONSTRAINT ' || c.constraint_name || ' DISABLE' alter_ddl, t.orig_tbl_name
-                  from user_constraints c, it$$dup_tables t
-                 where     status = 'ENABLED'
-                       and (c.constraint_type in ('P', 'R') or (c.constraint_type = 'C' and c.generated = 'USER NAME'))
-                       and c.table_name = t.orig_tbl_name)
+         for c in (select 'ALTER TABLE ' || c.table_name || ' MODIFY CONSTRAINT ' || c.constraint_name || ' DISABLE' alter_ddl, t.orig_tbl_name
+                     from user_constraints c, it$$dup_tables t
+                    where status = 'ENABLED' and (c.constraint_type in ('P', 'R') or (c.constraint_type = 'C' and c.generated = 'USER NAME')) and c.table_name = t.orig_tbl_name)
          loop
             begin
                ddl_pkg.alter_table (c.alter_ddl);
-               wl (null
+               wl (p_step
+                  ,null
                   ,c.orig_tbl_name
                   ,c.alter_ddl
                   ,null);
@@ -317,7 +336,7 @@ as
 
 
 
-   procedure merge_part
+   procedure merge_part (p_step it$$step.step_no%type)
    as
    begin
       DBMS_OUTPUT.enable (10000000);
@@ -342,7 +361,8 @@ as
 
             execute immediate s.csql;
 
-            wl (b.bank_code
+            wl (p_step
+               ,b.bank_code
                ,s.orig_tbl_name
                ,s.csql
                ,null);
@@ -366,24 +386,93 @@ as
       return i > 0;
    end;
 
-   procedure sync                                                            --(p_step it$$enlarge_log.step_no%type, p_bank_code it$$enlarge_log.bank_code%type)
+   procedure sync                                                                                --(p_step it$$enlarge_log.step_no%type, p_bank_code it$$enlarge_log.bank_code%type)
    as
    begin
       while (is_job_exists)
       loop
-         DBMS_LOCK.sleep (60);                                                                                                                 -- спим 60 секунд
+         DBMS_LOCK.sleep (60);                                                                                                                                     -- спим 60 секунд
       end loop;
    end sync;
+
+   procedure exch_part (p_bank_code it$$bank_code.bank_code%type)
+   as
+      exn#check_failed   number := -14281;
+      exc#check_failed   exception;
+      pragma exception_init (exc#check_failed, -14281);
+   begin
+      for r in (  select t.orig_tbl_name, tp.partition_name, tsp.subpartition_name, tsp.subpartition_position
+                        ,'ALTER TABLE ' || t.orig_tbl_name || ' EXCHANGE SUBPARTITION ' || tsp.subpartition_name || ' WITH TABLE ' || t.tmp_tbl_name csql
+                    from it$$dup_tables t
+                         inner join user_tab_partitions tp on tp.table_name = t.orig_tbl_name
+                         inner join user_tab_subpartitions tsp on tsp.partition_name = tp.partition_name and tsp.table_name = tp.table_name
+                   where tp.partition_name = 'TB' || to_char (p_bank_code)                                                                  --and t.orig_tbl_name != 'INC_OPER_CLOB'
+                order by orig_tbl_name)
+      loop
+         DBMS_OUTPUT.put_line (r.csql || ';');
+
+         begin
+            execute immediate r.csql;
+         exception
+            when exc#check_failed
+            then
+               null;
+         end;
+      end loop;
+   end;
+
+   function get_max
+      return number
+   as
+      sel         varchar2 (1000);
+      csql        varchar2 (1000);
+      fr          varchar2 (1000);
+      imax        number;
+      prev_imax   number := 0;
+   begin
+      for t in (select *
+                  from it$$dup_tables j)
+      loop
+         sel := 'select max(';
+         fr := ' from ' || t.orig_tbl_name;
+
+         for c
+            in (  select tc.table_name, tc.column_id rn, row_number () over (partition by tc.table_name order by tc.column_id desc) drn, tc.column_name, cc.constraint_name
+                        ,cc.position
+                    from user_tab_columns tc
+                         left join (user_cons_columns cc inner join user_constraints c on cc.constraint_name = c.constraint_name and c.constraint_type = 'P')
+                            on cc.table_name = tc.table_name and cc.column_name = tc.column_name
+                   where tc.table_name = t.orig_tbl_name
+                order by tc.table_name, tc.column_id)
+         loop
+            if c.position is not null
+            then
+               sel := sel || c.column_name || ')';
+               exit;
+            end if;
+         end loop;
+
+         csql := sel || fr;
+
+         execute immediate csql into imax;
+
+         pl (csql || ';---->' || to_char (imax));
+
+         if imax > prev_imax
+         then
+            prev_imax := imax;
+         end if;
+      end loop;
+   end;
 end;
 /
 
-exec it$$utl.trn;
+exec it$$utl.trn(&&script_step.);
 
-exec it$$utl.checkoff_cons;
+exec it$$utl.checkoff_cons(&&script_step.);
 
-exec it$$utl.merge_part;
+exec it$$utl.merge_part(&&script_step.);
 
 @@utl_foot.sql
-undefine ts
 
 exit
