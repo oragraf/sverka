@@ -463,11 +463,12 @@ as
             prev_imax := imax;
          end if;
       end loop;
+      return prev_imax;
    end;
 end;
 /
 
-exec it$$utl.trn(&&script_step.);
+--exec it$$utl.trn(&&script_step.);
 
 exec it$$utl.checkoff_cons(&&script_step.);
 

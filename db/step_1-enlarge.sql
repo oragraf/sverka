@@ -7,9 +7,9 @@ define script_desc='Скрипт выполняет основную работу по увеличению объема партиц
 --------------
 
 
-create or replace procedure andrg
-as
-   --declare
+--create or replace procedure andrg as
+
+declare
    prev_imax       number := 0;
 
    pk              varchar2 (4000);
@@ -19,7 +19,7 @@ as
    cdml            varchar2 (4000);
    src_bank_code   varchar2 (2 char);
 begin
-   DBMS_OUTPUT.enable (1000000);
+   DBMS_OUTPUT.enable (10000000);
 
    begin
       select to_char (bank_code)

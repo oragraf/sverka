@@ -1,6 +1,6 @@
 prompt Перекидывание счетчиков в актуальные значения, соответствующие загруженным данным
 ----------------------------------------------
-define script_step='3'
+define script_step='2'
 define script_name='final'
 define script_full_name='step_&&SCRIPT_STEP.-&&SCRIPT_NAME.'
 define script_desc='Скрипт перекидывает сиквенсы в актуальные значения. Запускается один раз на все тербанки.'
@@ -95,6 +95,8 @@ declare
 
    end alter_seq;
 begin
+   DBMS_OUTPUT.enable (10000000);
+
    for r in it$$dup_tables_c
    loop
       declare
@@ -133,15 +135,13 @@ end change_seq_val;
 prompt Удаление $-таблиц для сгенерированных искусственных данных и перестройка индексов
 
 begin
-   begin
-      for t in (select * from it$$dup_tables)
-      loop
-         ddl_pkg.drop_table (t.tmp_tbl_name);
-         pkg_manage_partitions.rebuild_indexes (p_table_name => t.orig_tbl_name, p_tabspace => null);
-      end loop;
-   end;
+   DBMS_OUTPUT.enable (10000000);
 
-   null;
+   for t in (select * from it$$dup_tables)
+   loop
+      ddl_pkg.drop_table (t.tmp_tbl_name);
+      pkg_manage_partitions.rebuild_indexes (p_table_name => t.orig_tbl_name, p_tabspace => null);
+   end loop;
 end;
 /
 
@@ -162,6 +162,8 @@ declare
    exc#pkey_doesnot_exists   exception;
    pragma exception_init (exc#pkey_doesnot_exists, -2298);
 begin
+   DBMS_OUTPUT.enable (10000000);
+
    while (should_repeat = true or try_count < 3)
    loop
       should_repeat := false;
@@ -196,6 +198,8 @@ declare
    sql_stmnt      varchar2 (4000);
    v_altr_stmnt   varchar2 (2000);
 begin
+   DBMS_OUTPUT.enable (10000000);
+
    for tt in (select *
                 from it$$dup_tables t)
    loop
@@ -293,7 +297,7 @@ merge into it$$bank_code t
         on (s.bank_code = t.bank_code)
 when matched
 then
-   update set final_size = s.bytes;
+   update set final_size = s.bytes where t.is_process = 1 and t.last_ok_step < &&script_step. ;
 
 prompt Проставим исходный суммарный размер сегментов в разрезе таблиц
 
@@ -306,7 +310,7 @@ merge into it$$dup_tables t
         on (t.orig_tbl_name = s.table_name)
 when matched
 then
-   update set final_size = s.bytes;
+   update set final_size = s.bytes ;
 
 commit;
 
