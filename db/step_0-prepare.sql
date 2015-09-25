@@ -228,6 +228,8 @@ as
    function get_max
       return number;
 
+   procedure enlarge (p_step number);
+
    procedure rebuild_indexes;
 end;
 /

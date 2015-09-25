@@ -132,8 +132,26 @@ begin
 end change_seq_val;
 /
 
-prompt Удаление $-таблиц для сгенерированных искусственных данных и перестройка индексов
-exec it$$utl.rebuild_indexes;
+prompt Удаление $-таблиц для сгенерированных искусственных данных
+--exec it$$utl.rebuild_indexes;
+begin
+   for t in (select * from it$$dup_tables)
+   loop
+      ddl_pkg.drop_table (t.tmp_tbl_name);
+   end loop;
+end;
+/
+
+prompt перестройка индексов
+declare
+   call_old_version   boolean := false;
+begin
+   for t in (select * from it$$dup_tables)
+   loop
+      pkg_manage_partitions.rebuild_indexes (p_table_name => t.orig_tbl_name, p_tabspace => null, call_old_version => call_old_version);
+   end loop;
+end;
+/
 
 prompt Этап 1. Все констрайнты переводим в enabled
 
@@ -158,20 +176,29 @@ begin
    loop
       should_repeat := false;
 
-      for c in (  select 'ALTER TABLE ' || tn || listagg (enable_ddl, ' ') within group (order by tn, ord) alter_ddl
-                    from (select q.*, row_number () over (partition by tn order by ord) rn
-                            from (select c.table_name tn, c.constraint_name, c.status, c.constraint_type, generated, ' ENABLE NOVALIDATE CONSTRAINT ' || constraint_name enable_ddl
-                                        ,case constraint_type when 'P' then 1 else 2 end ord, t.*
-                                    from user_constraints c inner join it$$dup_tables t on c.table_name = t.orig_tbl_name
-                                   where status = 'DISABLED') q)
+      for c in (  select 'ALTER TABLE ' || tn || listagg (enable_ddl, ' ') within group (order by tn, ord) alter_ddl, tn
+                    from (select c.table_name tn, c.constraint_name, c.status, c.constraint_type, generated, ' ENABLE NOVALIDATE CONSTRAINT ' || constraint_name enable_ddl
+                                ,case constraint_type when 'P' then 1 else 2 end ord, t.*
+                            from user_constraints c inner join it$$dup_tables t on c.table_name = t.orig_tbl_name
+                           where status = 'DISABLED')
                 group by constr_order, tn)
       loop
          begin
             ddl_pkg.alter_table (c.alter_ddl);
+            it$$utl.wl (p_step        => &&script_step.
+                       ,p_bank_code   => null
+                       ,p_tbl         => c.tn
+                       ,p_ddl         => c.alter_ddl
+                       ,p_err         => null);
          exception
             when exc#dep_exists or exc#no_key_exists or exc#pkey_doesnot_exists
             then
                should_repeat := true;
+               it$$utl.wl (p_step        => &&script_step.
+                          ,p_bank_code   => null
+                          ,p_tbl         => c.tn
+                          ,p_ddl         => c.alter_ddl
+                          ,p_err         => sqlerrm);
          end;
       end loop;
 
@@ -180,99 +207,6 @@ begin
 end;
 /
 
-prompt Шаг 2. Проводим валидацию ссылочных констрейнтов. С использованием джобов
-
-declare
-   sql_stmnt      varchar2 (4000);
-   v_altr_stmnt   varchar2 (2000);
-begin
-   DBMS_OUTPUT.enable (10000000);
-
-   for tt in (select *
-                from it$$dup_tables t)
-   loop
-      for c in (  select q.table_name, status, consn, constraint_name, constraint_type
-                        ,'ALTER TABLE ' || q.table_name || ' MODIFY CONSTRAINT ' || constraint_name || ' VALIDATE ' alter_ddl
-                    from (    select c.table_name, lpad (' ', 8 * (level - 1)) || c.constraint_name consn, constraint_name, c.status, c.constraint_type, generated, level lev, validated
-                                    ,rownum rn
-                                from user_constraints c
-                          start with c.r_constraint_name is null
-                          connect by prior c.constraint_name = c.r_constraint_name) q
-                   where status = 'ENABLED' and validated = 'NOT VALIDATED' and constraint_type != 'C' and q.table_name = tt.orig_tbl_name
-                order by rn)
-      loop
-         v_altr_stmnt := v_altr_stmnt || 'DDL_PKG.ALTER_TABLE (''' || c.alter_ddl || ''');';
-      end loop;
-
-      sql_stmnt :=
-            'DECLARE  '
-         || '   SHOULD_REPEAT             BOOLEAN := FALSE; '
-         || '   TRY_COUNT                 NUMBER := 0;      '
-         || '   EXN#DEP_EXISTS            NUMBER := -2297;  '
-         || '   EXC#DEP_EXISTS            EXCEPTION;        '
-         || '   PRAGMA EXCEPTION_INIT (EXC#DEP_EXISTS, -2297);     '
-         || '   EXN#NO_KEY_EXISTS         NUMBER := -2270;         '
-         || '   EXC#NO_KEY_EXISTS         EXCEPTION;               '
-         || '   PRAGMA EXCEPTION_INIT (EXC#NO_KEY_EXISTS, -2270);  '
-         || '   EXN#PKEY_DOESNOT_EXISTS   NUMBER := -2298;         '
-         || '   EXC#PKEY_DOESNOT_EXISTS   EXCEPTION;               '
-         || '   PRAGMA EXCEPTION_INIT (EXC#PKEY_DOESNOT_EXISTS, -2298); '
-         || 'BEGIN                                                '
-         || '   WHILE (SHOULD_REPEAT = TRUE OR TRY_COUNT < 3)      '
-         || '   LOOP                                               '
-         || '       SHOULD_REPEAT := FALSE;                        '
-         || '         BEGIN                                          '
-         || v_altr_stmnt
-         || '       EXCEPTION                                      '
-         || '            WHEN EXC#DEP_EXISTS OR EXC#NO_KEY_EXISTS OR EXC#PKEY_DOESNOT_EXISTS '
-         || '            THEN                                      '
-         || '               SHOULD_REPEAT := TRUE;                 '
-         || '       END;                                           '
-         || '       TRY_COUNT := TRY_COUNT + 1;                    '
-         || '   END LOOP;                                           '
-         || 'END;                                                  ';
-
-      declare
-         v#job_name                        varchar2 (65 char);
-         exn#job_doesnot_exists   constant binary_integer := -27475;
-         exc#job_doesnot_exists            exception;
-         pragma exception_init (exc#job_doesnot_exists, -27475);
-      begin
-         v#job_name := 'IT$$' || tt.orig_tbl_name;
-
-         begin
-            DBMS_SCHEDULER.drop_job (job_name => v#job_name, force => true);
-         exception
-            when exc#job_doesnot_exists
-            then
-               null;
-         end;
-
-         DBMS_SCHEDULER.create_job (
-            job_name     => v#job_name
-           ,start_date   => systimestamp + interval '1' minute
-           ,end_date     => trunc (systimestamp, 'DD') + interval '1' day + interval '7' hour
-           ,job_class    => 'DEFAULT_JOB_CLASS'
-           ,job_type     => 'PLSQL_BLOCK'
-           ,job_action   => sql_stmnt
-           ,comments     =>    'ЗАО Ай-Теко, 2015'
-                            || chr (10)
-                            || 'Самоудаляемое задание для распараллеливания валидации ограничений целостности'
-           ,auto_drop    => true
-           ,enabled      => false);
-         DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'RESTARTABLE', value => false);
-         DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'JOB_PRIORITY', value => 3);
-         DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'MAX_RUNS', value => 1);
-         DBMS_SCHEDULER.enable (name => v#job_name);
-      end;
-
-      v_altr_stmnt := '';
-   end loop;
-
-   -- точка синхронизации. Нужно дождаться, пока джобы отработают
-   it$$utl.sync;
-end;
-/
 
 prompt Проставим исходный суммарный размер сегментов в разрезе банков
 
