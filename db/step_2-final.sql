@@ -133,17 +133,7 @@ end change_seq_val;
 /
 
 prompt Удаление $-таблиц для сгенерированных искусственных данных и перестройка индексов
-
-begin
-   DBMS_OUTPUT.enable (10000000);
-
-   for t in (select * from it$$dup_tables)
-   loop
-      ddl_pkg.drop_table (t.tmp_tbl_name);
-      pkg_manage_partitions.rebuild_indexes (p_table_name => t.orig_tbl_name, p_tabspace => null);
-   end loop;
-end;
-/
+exec it$$utl.rebuild_indexes;
 
 prompt Этап 1. Все констрайнты переводим в enabled
 
@@ -262,7 +252,7 @@ begin
 
          DBMS_SCHEDULER.create_job (
             job_name     => v#job_name
-           ,start_date   => systimestamp + interval '3' minute
+           ,start_date   => systimestamp + interval '1' minute
            ,end_date     => trunc (systimestamp, 'DD') + interval '1' day + interval '7' hour
            ,job_class    => 'DEFAULT_JOB_CLASS'
            ,job_type     => 'PLSQL_BLOCK'
@@ -270,12 +260,12 @@ begin
            ,comments     =>    'ЗАО Ай-Теко, 2015'
                             || chr (10)
                             || 'Самоудаляемое задание для распараллеливания валидации ограничений целостности'
-           ,auto_drop    => false
+           ,auto_drop    => true
            ,enabled      => false);
-         DBMS_SCHEDULER.disable (name => v#job_name);
          DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'RESTARTABLE', value => false);
          DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'JOB_PRIORITY', value => 3);
          DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'MAX_RUNS', value => 1);
+         DBMS_SCHEDULER.enable (name => v#job_name);
       end;
 
       v_altr_stmnt := '';
@@ -297,7 +287,8 @@ merge into it$$bank_code t
         on (s.bank_code = t.bank_code)
 when matched
 then
-   update set final_size = s.bytes where t.is_process = 1 and t.last_ok_step < &&script_step. ;
+   update set final_size = s.bytes
+           where t.is_process = 1 and t.last_ok_step < &&script_step.;
 
 prompt Проставим исходный суммарный размер сегментов в разрезе таблиц
 
@@ -310,7 +301,7 @@ merge into it$$dup_tables t
         on (t.orig_tbl_name = s.table_name)
 when matched
 then
-   update set final_size = s.bytes ;
+   update set final_size = s.bytes;
 
 commit;
 
