@@ -148,7 +148,7 @@ declare
 begin
    for t in (select * from it$$dup_tables)
    loop
-      pkg_manage_partitions.rebuild_indexes (p_table_name => t.orig_tbl_name, p_tabspace => null, call_old_version => call_old_version);
+      pkg_manage_partitions.rebuild_indexes (p_table_name => t.orig_tbl_name, p_tabspace => null);
    end loop;
 end;
 /
@@ -238,5 +238,7 @@ then
 commit;
 
 @@utl_foot.sql
+
+drop package it$$utl;
 
 exit
