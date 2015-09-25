@@ -154,19 +154,17 @@ declare
 begin
    DBMS_OUTPUT.enable (10000000);
 
-   while (should_repeat = true or try_count < 3)
+   while (try_count < 3)
    loop
       should_repeat := false;
 
-      for c in (  select t.orig_tbl_name, status, consn, constraint_name, constraint_type
-                        ,'ALTER TABLE ' || t.orig_tbl_name || ' MODIFY CONSTRAINT ' || constraint_name || ' ENABLE ' || 'NOVALIDATE' alter_ddl
-                    from (    select c.table_name, lpad (' ', 8 * (level - 1)) || c.constraint_name consn, constraint_name, c.status, c.constraint_type, generated, level lev, rownum rn
-                                from user_constraints c
-                          start with c.r_constraint_name is null
-                          connect by prior c.constraint_name = c.r_constraint_name) q
-                         inner join it$$dup_tables t on table_name = t.orig_tbl_name
-                   where status = 'DISABLED'
-                order by rn)
+      for c in (  select 'ALTER TABLE ' || tn || listagg (enable_ddl, ' ') within group (order by tn, ord) alter_ddl
+                    from (select q.*, row_number () over (partition by tn order by ord) rn
+                            from (select c.table_name tn, c.constraint_name, c.status, c.constraint_type, generated, ' ENABLE NOVALIDATE CONSTRAINT ' || constraint_name enable_ddl
+                                        ,case constraint_type when 'P' then 1 else 2 end ord, t.*
+                                    from user_constraints c inner join it$$dup_tables t on c.table_name = t.orig_tbl_name
+                                   where status = 'DISABLED') q)
+                group by constr_order, tn)
       loop
          begin
             ddl_pkg.alter_table (c.alter_ddl);
@@ -177,7 +175,7 @@ begin
          end;
       end loop;
 
-      try_count := try_count + 1;
+      try_count := try_count + case when should_repeat then 1 else 3 end;                                        -- Если были ошибки, пройдем еще раз. Иначе сбросим счетчик и выход
    end loop;
 end;
 /
