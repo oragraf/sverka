@@ -6,7 +6,7 @@ define script_desc='Скрипт выполняет основную работу по увеличению объема партиц
 @@utl_head.sql
 --------------
 
-exec it$$utl.enlarge(&&script_step.);
+exec it$$utl.enlarge(&&script_step., '&&TS.');   
 
 --------------
 @@utl_foot.sql
