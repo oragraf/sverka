@@ -43,10 +43,8 @@ tablespace &&ts.');
   ,final_size      number default 0
   ,rebuild_order   number
   ,constr_order    number
-  ,min_id          number
-  ,max_id          number
-  ,id_diff         number
-  ,ini_row_count   number
+  ,ini_99_count    number
+  ,enl_99_count    number
   ,final_row_count number
   ,min_trans_date  timestamp
   ,max_trans_date  timestamp

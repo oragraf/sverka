@@ -435,9 +435,6 @@ as
    procedure enlarge_source (p_step number, p_ratio number, p_tablespace varchar2)
    as
       prev_imax       number := 0;
-
-      pk              varchar2 (4000);
-      tot_pk          varchar2 (4000);
       col_list        varchar2 (4000);
       val_list        varchar2 (4000);
       sel_list        varchar2 (4000);
@@ -473,6 +470,16 @@ as
       for t in (select *
                   from it$$dup_tables j)
       loop
+         declare
+            i   number;
+         begin
+            execute immediate 'select count(*) from ' || t.orig_tbl_name || ' where bank_code=:a' into i using src_bank_code;
+
+            update it$$dup_tables dt
+               set ini_99_count = i
+             where dt.orig_tbl_name = t.orig_tbl_name;
+         end;
+
          DBMS_LOB.createtemporary (lob_loc => cdml, cache => true);
 
          into_table := ' INTO ' || t.tmp_tbl_name;
@@ -521,12 +528,6 @@ as
       -- Точка синхронизации
       it$$utl.sync;
       it$$utl.exch_part (p_bank_code => src_bank_code);
-
-      -- Дошли до сюда - профит! ТБ обработан!
-      --      update it$$bank_code t
-      --         set t.last_ok_step = p_step
-      --       where is_process = 1 and (last_ok_step < p_step) and t.bank_code = b.bank_code;
-
       commit;
    end;
 end;
