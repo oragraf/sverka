@@ -6,6 +6,9 @@ define script_full_name='step_&&SCRIPT_STEP.-&&SCRIPT_NAME.'
 define script_desc='Скрипт перекидывает сиквенсы в актуальные значения. Запускается один раз на все тербанки.'
 
 @@utl_head.sql
+@@pkg_mp.pks
+@@pkg_mp.pkb
+@@it$$utl.sql
 
 declare
    cursor it$$dup_tables_c
@@ -132,8 +135,16 @@ begin
 end change_seq_val;
 /
 
+prompt Сплит таблиц по дням
+
+begin
+   it$$utl.split_part (&&script_step., '&&TS.');
+end;
+/
+
 prompt Удаление $-таблиц для сгенерированных искусственных данных
 --exec it$$utl.rebuild_indexes;
+
 begin
    for t in (select * from it$$dup_tables)
    loop
@@ -143,6 +154,7 @@ end;
 /
 
 prompt перестройка индексов
+
 declare
    call_old_version   boolean := false;
 begin
@@ -240,5 +252,6 @@ commit;
 @@utl_foot.sql
 
 drop package it$$utl;
+drop package pkg_mp;
 
 exit

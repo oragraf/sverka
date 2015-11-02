@@ -39,6 +39,8 @@ as
    procedure enlarge_source (p_step number, p_ratio number, p_tablespace varchar2);
 
    procedure rebuild_indexes;
+
+   procedure split_part (p_step it$$step.step_no%type, p_tablespace varchar2);
 end;
 /
 
@@ -529,6 +531,52 @@ as
       it$$utl.sync;
       it$$utl.exch_part (p_bank_code => src_bank_code);
       commit;
+   end;
+
+   procedure split_part (p_step it$$step.step_no%type, p_tablespace varchar2)
+   as
+   begin
+      -- сплитим все банки, независимо от распучивания.
+      for b in (select *
+                  from it$$bank_code bc)
+      loop
+         for d in (with p
+                        as (select cast (min (trans_date) as date) min_d, least (cast (max (trans_date) as date), sysdate) max_d
+                              from incident odi
+                             where odi.bank_code = b.bank_code)
+                       ,p1
+                        as (    select min_d + level - 1 d
+                                  from p
+                            connect by level <= max_d - min_d)
+                     select d
+                       from p1
+                   order by d)
+         loop
+            for t in (select * from it$$dup_tables)
+            loop
+               begin
+                  pkg_mp.add_modify_split_partition (p_table_name             => t.orig_tbl_name
+                                                    ,p_bank_code              => b.bank_code
+                                                    ,p_part_values_list       => b.bank_code
+                                                    ,p_subpart_values_range   => d.d
+                                                    ,p_tabspace               => p_tablespace);
+                  wl (p_step
+                     ,b.bank_code
+                     ,t.orig_tbl_name
+                     ,'split subpartition at ' || to_char (d.d, 'yyyy-mm-dd')
+                     ,null);
+               exception
+                  when others
+                  then
+                     wl (p_step
+                        ,b.bank_code
+                        ,t.orig_tbl_name
+                        ,'split subpartition at ' || to_char (d.d, 'yyyy-mm-dd')
+                        ,sqlerrm);
+               end;
+            end loop;
+         end loop;
+      end loop;
    end;
 end;
 /
