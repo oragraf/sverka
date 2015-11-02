@@ -137,33 +137,11 @@ end change_seq_val;
 
 prompt Сплит таблиц по дням
 
-begin
-   it$$utl.split_part (&&script_step., '&&TS.');
-end;
-/
-
-prompt Удаление $-таблиц для сгенерированных искусственных данных
---exec it$$utl.rebuild_indexes;
-
-begin
-   for t in (select * from it$$dup_tables)
-   loop
-      ddl_pkg.drop_table (t.tmp_tbl_name);
-   end loop;
-end;
-/
+exec it$$utl.split_part (&&script_step., '&&TS.');
 
 prompt перестройка индексов
 
-declare
-   call_old_version   boolean := false;
-begin
-   for t in (select * from it$$dup_tables)
-   loop
-      pkg_manage_partitions.rebuild_indexes (p_table_name => t.orig_tbl_name, p_tabspace => null);
-   end loop;
-end;
-/
+exec it$$utl.rebuild_indexes;
 
 prompt Этап 1. Все констрайнты переводим в enabled
 
