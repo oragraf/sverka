@@ -6,8 +6,6 @@ define script_full_name='step_&&SCRIPT_STEP.-&&SCRIPT_NAME.'
 define script_desc='Скрипт перекидывает сиквенсы в актуальные значения. Запускается один раз на все тербанки.'
 
 @@utl_head.sql
-@@pkg_mp.pks
-@@pkg_mp.pkb
 @@it$$utl.sql
 
 declare
