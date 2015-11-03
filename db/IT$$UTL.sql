@@ -8,7 +8,7 @@ is
    process_type_partitioning        constant char (1 char) := 'P';
    message_type_error               constant char (1 char) := 'E';
    message_type_info                constant char (1 char) := 'I';
-   ddl_parallel_degree              constant number := 16;
+   ddl_parallel_degree              constant number := 4;
    /*
     Исключения при добавлении/удалении/расщеплении/слиянии партиций
     */

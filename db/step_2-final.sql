@@ -8,6 +8,10 @@ define script_desc='Скрипт перекидывает сиквенсы в актуальные значения. Запускае
 @@utl_head.sql
 @@it$$utl.sql
 
+alter session enable parallel dml   parallel 8;
+alter session enable parallel ddl   parallel 8;
+alter session enable parallel query parallel 4;
+
 declare
    cursor it$$dup_tables_c
    is
