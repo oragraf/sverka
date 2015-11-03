@@ -18,3 +18,5 @@ PROMPT -------------------------------------------------------------------------
 @@_define.sql
 
 connect &&user_owner./&&user_pwd.@&&tns_name.
+
+@@it$$check.sql

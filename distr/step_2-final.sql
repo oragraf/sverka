@@ -230,6 +230,6 @@ commit;
 @@utl_foot.sql
 
 drop package it$$utl;
-drop package it$$utl2;
+drop package pkg_mp;
 
 exit

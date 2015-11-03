@@ -1,4 +1,71 @@
-create or replace package body pkg_mp
+create or replace package it$$utl2
+is
+   package_version                  constant varchar2 (100) := '0.1';
+   package_name                     constant varchar2 (30 char) := 'IT$$UTL2';
+   unusable_indexes_exists          constant varchar2 (100 char) := 'Есть инвалидные индексы';
+   unusable_indexes_dont_exists     constant varchar2 (100 char) := 'Инвалидных индексов нет';
+   process_type_archivate           constant char (1 char) := 'A';
+   process_type_partitioning        constant char (1 char) := 'P';
+   message_type_error               constant char (1 char) := 'E';
+   message_type_info                constant char (1 char) := 'I';
+   ddl_parallel_degree              constant number := 16;
+   /*
+    Исключения при добавлении/удалении/расщеплении/слиянии партиций
+    */
+   /* Попытка вставки данных в несуществующую партицию */
+   exn#ins_into_non_existent_part   constant binary_integer := -14400;
+   exc#ins_into_non_existent_part            exception;
+   pragma exception_init (exc#ins_into_non_existent_part, -14400);
+   /* Попытка добавления уже существующей партиции */
+   exn#duplicate_partition_name     constant binary_integer := -14013;
+   exc#duplicate_partition_name              exception;
+   pragma exception_init (exc#duplicate_partition_name, -14013);
+   /* Попытка добавления партиции с таким же ключом но другим именем */
+   exn#part_key_already_exists      constant binary_integer := -14312;
+   exc#part_key_already_exists               exception;
+   pragma exception_init (exc#part_key_already_exists, -14312);
+   /* Попытка добавления субпартиции с границей меньшей, чем у другой существующей */
+   exn#subpart_key_already_exists   constant binary_integer := -14211;
+   exc#subpart_key_already_exists            exception;
+   pragma exception_init (exc#subpart_key_already_exists, -14211);
+   /* Попытка добавления партиции при существующей DEFAULT */
+   exn#part_default_exists          constant binary_integer := -14323;
+   exc#part_default_exists                   exception;
+   pragma exception_init (exc#part_default_exists, -14323);
+   exn#invalid_value                constant binary_integer := -904;
+   exc#invalid_value                         exception;
+   pragma exception_init (exc#invalid_value, -904);
+   exn#name_already_exists          constant binary_integer := -955;
+   exc#name_already_exists                   exception;
+   pragma exception_init (exc#name_already_exists, -955);
+   exn#unique_key_exists            constant binary_integer := -2266;
+   exc#unique_key_exists                     exception;
+   pragma exception_init (exc#unique_key_exists, -2266);
+   exn#enforcing_index              constant binary_integer := -2429;
+   exc#enforcing_index                       exception;
+   pragma exception_init (exc#enforcing_index, -2429);
+   exn#job_doesnot_exists           constant binary_integer := -27475;
+   exc#job_doesnot_exists                    exception;
+   pragma exception_init (exc#job_doesnot_exists, -27475);
+   exn#job_allready_exists          constant binary_integer := -27477;
+   exc#job_allready_exists                   exception;
+   pragma exception_init (exc#job_allready_exists, -27477);
+   /* Часть имени субпартиции по умолчанию */
+   default_subpart_name             constant varchar2 (8 char) := '99991231';
+
+   procedure rebuild_indexes (p_table_name in varchar2, p_tabspace in varchar2);
+
+   procedure rebuild_indexes (p_table_name in varchar2, p_tabspace in varchar2, call_old_version in out boolean);
+
+
+   procedure add_modify_split_partition (p_table_name             in varchar2                                                              -- имя таблицы, в которой проводим работы
+                                        ,p_bank_code              in varchar2                                                     -- Код тербанка. Будет включен в название партиции
+                                        ,p_part_values_list       in varchar2                                                    --  Список кодов тербанков для добавляемой партиции
+                                        ,p_subpart_values_range   in timestamp                                                                    -- Верхняя граница для субпартиции
+                                        ,p_tabspace               in varchar2);
+end it$$utl2;
+/
+create or replace package body it$$utl2
 is
    /* Процедура генерации-отцепления партиций будет запускаться еженедельно.
       Исходя из этого, количество нарезаемых партиций будет */
@@ -611,7 +678,7 @@ is
          then
             should_rebuild := true;
 
-            execute immediate i.parallel_ddl;                                                                            -- set Parallel option. when parsed DDL - it will be there.
+            execute immediate i.parallel_ddl; -- set Parallel option. when parsed DDL - it will be there.
 
             v#create_index_ddl := get_index_ddl (i.index_name);
          else
@@ -653,322 +720,341 @@ is
       end if;
    end;
 
+end it$$utl2;
+/
+create or replace package it$$utl
+as
+   exn#resource_busy   number := -54;
+   exc#resource_busy   exception;
+   pragma exception_init (exc#resource_busy, -54);
+   exn#no_table        number := -942;
+   exc#no_table        exception;
+   pragma exception_init (exc#no_table, -942);
+
+   procedure pl (s in varchar2);
+
+   procedure wl (p_step         it$$step.step_no%type
+                ,p_bank_code    it$$enlarge_log.bank_code%type
+                ,p_tbl          it$$enlarge_log.orig_tbl_name%type
+                ,p_ddl          varchar2
+                ,p_err          varchar2);
+
+   procedure wl (p_step         it$$step.step_no%type
+                ,p_bank_code    it$$enlarge_log.bank_code%type
+                ,p_tbl          it$$enlarge_log.orig_tbl_name%type
+                ,p_ddl          clob
+                ,p_err          clob);
+
+   procedure trn (p_step it$$step.step_no%type, p_tablespace varchar2);
+
+   procedure checkoff_cons (p_step it$$step.step_no%type);
+
+   procedure merge_part (p_step it$$step.step_no%type);
+
+   procedure sync;
+
+   procedure exch_part (p_bank_code it$$bank_code.bank_code%type);
+
+   function get_max
+      return number;
+
+   procedure enlarge (p_step number, p_tablespace varchar2);
+
+   procedure enlarge_source (p_step number, p_ratio number, p_tablespace varchar2);
+
+   procedure rebuild_indexes;
+
+   procedure split_part (p_step it$$step.step_no%type, p_tablespace varchar2);
+end;
+/
+
+create or replace package body it$$utl
+as
+   procedure wl (p_step         it$$step.step_no%type
+                ,p_bank_code    it$$enlarge_log.bank_code%type
+                ,p_tbl          it$$enlarge_log.orig_tbl_name%type
+                ,p_ddl          clob
+                ,p_err          clob)
+   as
+      pragma autonomous_transaction;
+   begin
+      insert into it$$enlarge_log (step_no
+                                  ,bank_code
+                                  ,orig_tbl_name
+                                  ,ddl_dml
+                                  ,error_message)
+           values (p_step
+                  ,p_bank_code
+                  ,p_tbl
+                  ,p_ddl
+                  ,p_err);
+
+      commit;
+   end;
+
+   procedure wl (p_step         it$$step.step_no%type
+                ,p_bank_code    it$$enlarge_log.bank_code%type
+                ,p_tbl          it$$enlarge_log.orig_tbl_name%type
+                ,p_ddl          varchar2
+                ,p_err          varchar2)
+   as
+   begin
+      wl (p_step
+         ,p_bank_code
+         ,p_tbl
+         ,to_clob (p_ddl)
+         ,to_clob (p_err));
+   end;
+
+   procedure pl (s in varchar2)
+   as
+   begin
+      ddl_pkg.info (s);
+   end;
+
+   procedure trn (p_step it$$step.step_no%type, p_tablespace varchar2)
+   as
+      c_err   varchar2 (2000 char);
+   begin
+      DBMS_OUTPUT.enable (10000000);
+      DBMS_OUTPUT.put_line ('Создание $-таблиц для сгенерированных искусственных данных');
+
+      for t in (select tt.orig_tbl_name, tt.tmp_tbl_name, 'TRUNCATE TABLE ' || tt.tmp_tbl_name || ' REUSE STORAGE' trunc_ddl
+                      ,'CREATE TABLE ' || tt.tmp_tbl_name || ' TABLESPACE ' || p_tablespace || ' AS SELECT * FROM ' || tt.orig_tbl_name || ' WHERE 1=0' create_ddl
+                  from it$$dup_tables tt)
+      loop
+         begin
+            execute immediate t.trunc_ddl;
+
+            wl (p_step
+               ,null
+               ,t.orig_tbl_name
+               ,t.trunc_ddl
+               ,null);
+         exception
+            when exc#resource_busy
+            then
+               c_err :=
+                     'Таблица '
+                  || t.tmp_tbl_name
+                  || ' заблокирована и не может быть очищена. Устраните блокировку и запустите скрипт заново.';
+               DBMS_OUTPUT.put_line (c_err);
+
+               wl (p_step
+                  ,null
+                  ,t.orig_tbl_name
+                  ,t.trunc_ddl
+                  ,c_err);
+            when exc#no_table
+            then
+               execute immediate t.create_ddl;
+
+               wl (p_step
+                  ,null
+                  ,t.orig_tbl_name
+                  ,t.create_ddl
+                  ,null);
+         end;
+      end loop;
+   end;
+
+   procedure checkoff_cons (p_step it$$step.step_no%type)
+   as
+      should_repeat    boolean := false;
+      try_count        number := 0;
+      exn#dep_exists   number := -2297;
+      exc#dep_exists   exception;
+      pragma exception_init (exc#dep_exists, -2297);
+   begin
+      DBMS_OUTPUT.enable (10000000);
+      DBMS_OUTPUT.put_line ('Отключение ограничений целостности на таблицах');
+
+      while (should_repeat = true or try_count < 10)
+      loop
+         should_repeat := false;
+
+         for c in (select 'ALTER TABLE ' || c.table_name || ' MODIFY CONSTRAINT ' || c.constraint_name || ' DISABLE' alter_ddl, t.orig_tbl_name
+                     from user_constraints c, it$$dup_tables t
+                    where status = 'ENABLED' and (c.constraint_type in ('P', 'R') or (c.constraint_type = 'C' and c.generated = 'USER NAME')) and c.table_name = t.orig_tbl_name)
+         loop
+            begin
+               ddl_pkg.alter_table (c.alter_ddl);
+               wl (p_step
+                  ,null
+                  ,c.orig_tbl_name
+                  ,c.alter_ddl
+                  ,null);
+            exception
+               when exc#dep_exists
+               then
+                  should_repeat := true;
+            end;
+         end loop;
+
+         try_count := try_count + 1;
+      end loop;
+   end;
+
+
+
+   procedure merge_part (p_step it$$step.step_no%type)
+   as
+   begin
+      DBMS_OUTPUT.enable (10000000);
+      DBMS_OUTPUT.put_line (
+         'Осуществляем слияние всех подсекций по секциям всех тербанков в одну секцию по умолчанию.');
+
+      for b in (select *
+                  from it$$bank_code
+                 where is_process = 1)
+      loop
+         for s in (  select *
+                       from (select t.orig_tbl_name, tp.partition_name, tsp.subpartition_name, tsp.subpartition_position
+                                   ,'ALTER TABLE ' || t.orig_tbl_name || ' MERGE SUBPARTITIONS ' || lag (tsp.subpartition_name) over (partition by t.orig_tbl_name order by tp.partition_position, tsp.subpartition_position) || ',' || tsp.subpartition_name || ' INTO SUBPARTITION ' || tsp.subpartition_name csql
+                               from it$$dup_tables t
+                                    inner join user_tab_partitions tp on tp.table_name = t.orig_tbl_name
+                                    inner join user_tab_subpartitions tsp on tsp.partition_name = tp.partition_name and tsp.table_name = tp.table_name
+                              where tp.partition_name = 'TB' || b.bank_code) q
+                      where subpartition_position > 1
+                   order by orig_tbl_name, subpartition_position)
+         loop
+            DBMS_OUTPUT.put_line (s.csql || ';');
+
+            execute immediate s.csql;
+
+            wl (p_step
+               ,b.bank_code
+               ,s.orig_tbl_name
+               ,s.csql
+               ,null);
+         end loop;
+      end loop;
+   end;
+
+   function is_job_exists
+      return boolean
+   as
+      i   number;
+   begin
+      select count (*)
+        into i
+        from dual
+       where exists
+                (select j.job_name, j.state
+                   from user_scheduler_jobs j
+                  where j.job_name like 'IT$$%' and j.state = 'RUNNING');
+
+      return i > 0;
+   end;
+
+   procedure sync                                                                                --(p_step it$$enlarge_log.step_no%type, p_bank_code it$$enlarge_log.bank_code%type)
+   as
+   begin
+      -- Подождем, пока стартанут джобы
+      DBMS_LOCK.sleep (120);                                                                                                                                       -- спим 60 секунд
+
+      while (is_job_exists)
+      loop
+         DBMS_LOCK.sleep (60);                                                                                                                                     -- спим 60 секунд
+      end loop;
+   end sync;
+
+   procedure exch_part (p_bank_code it$$bank_code.bank_code%type)
+   as
+      exn#check_failed   number := -14281;
+      exc#check_failed   exception;
+      pragma exception_init (exc#check_failed, -14281);
+   begin
+      for r in (  select t.orig_tbl_name, tp.partition_name, tsp.subpartition_name, tsp.subpartition_position
+                        ,'ALTER TABLE ' || t.orig_tbl_name || ' EXCHANGE SUBPARTITION ' || tsp.subpartition_name || ' WITH TABLE ' || t.tmp_tbl_name csql
+                    from it$$dup_tables t
+                         inner join user_tab_partitions tp on tp.table_name = t.orig_tbl_name
+                         inner join user_tab_subpartitions tsp on tsp.partition_name = tp.partition_name and tsp.table_name = tp.table_name
+                   where tp.partition_name = 'TB' || to_char (p_bank_code)
+                order by orig_tbl_name)
+      loop
+         DBMS_OUTPUT.put_line (r.csql || ';');
+
+         begin
+            ddl_pkg.alter_table (r.csql);
+         exception
+            when exc#check_failed
+            then
+               null;
+         end;
+      end loop;
+   end;
+
+   function get_max
+      return number
+   as
+      sel         varchar2 (1000);
+      csql        varchar2 (1000);
+      fr          varchar2 (1000);
+      imax        number;
+      prev_imax   number := 0;
+   begin
+      for t in (select *
+                  from it$$dup_tables j)
+      loop
+         sel := 'select max(';
+         fr := ' from ' || t.orig_tbl_name;
+
+         for c
+            in (  select tc.table_name, tc.column_id rn, row_number () over (partition by tc.table_name order by tc.column_id desc) drn, tc.column_name, cc.constraint_name
+                        ,cc.position
+                    from user_tab_columns tc
+                         left join (user_cons_columns cc inner join user_constraints c on cc.constraint_name = c.constraint_name and c.constraint_type = 'P')
+                            on cc.table_name = tc.table_name and cc.column_name = tc.column_name
+                   where tc.table_name = t.orig_tbl_name
+                order by tc.table_name, tc.column_id)
+         loop
+            if c.position is not null
+            then
+               sel := sel || c.column_name || ')';
+               exit;
+            end if;
+         end loop;
+
+         csql := sel || fr;
+
+         execute immediate csql into imax;
+
+         pl (csql || ';---->' || to_char (imax));
+
+         if imax > prev_imax
+         then
+            prev_imax := imax;
+         end if;
+      end loop;
+
+      return prev_imax;
+   end;
+
    procedure rebuild_indexes
    as
+      call_old_version   boolean := false;
    begin
-      for t in (select t.table_name tn, coalesce (t.tablespace_name, pt.def_tablespace_name) ts
-                  from user_tables t left join user_part_tables pt on pt.table_name = t.table_name)
+      --   DBMS_OUTPUT.enable (10000000);
+
+      for t in (select * from it$$dup_tables)
       loop
-         rebuild_indexes (p_table_name => t.tn, p_tabspace => t.ts);
+         ddl_pkg.drop_table (t.tmp_tbl_name);
+         it$$utl2.rebuild_indexes (p_table_name => t.orig_tbl_name, p_tabspace => null, call_old_version => call_old_version);
       end loop;
    end;
 
-   procedure gen_future_subpartition (p_table_name in varchar2, p_part_count in binary_integer := 3, p_tabspace in varchar2)
+   procedure gen_job (p_job_suffix varchar2, p_job_action varchar2)
    as
-      v#part_count      binary_integer := greatest (nvl (p_part_count, 1), 1);
-      v#subpart_name    varchar2 (30 char);
-      v#subpart_range   timestamp;
+      v#job_name                        varchar2 (65 char);
+      exn#job_doesnot_exists   constant binary_integer := -27475;
+      exc#job_doesnot_exists            exception;
+      pragma exception_init (exc#job_doesnot_exists, -27475);
    begin
-      for bc in (select * from it#bank_codes)
-      loop
-         for d in 1 .. v#part_count
-         loop
-            v#subpart_range := trunc (systimestamp, 'DD') + numtodsinterval (d, 'DAY');
-            add_modify_split_partition (p_table_name             => p_table_name                                                           -- имя таблицы, в которой проводим работы
-                                       ,p_bank_code              => bc.bc                                                         -- Код тербанка. Будет включен в название партиции
-                                       ,p_part_values_list       => bc.bc                                                        --  Список кодов тербанков для добавляемой партиции
-                                       ,p_subpart_values_range   => v#subpart_range                                                               -- Верхняя граница для субпартиции
-                                       ,p_tabspace               => p_tabspace);
-         end loop;
-      end loop;
-   end;
-
-   procedure table_part_maintenance (p_table_name in varchar2, p_tabspace in varchar2)
-   as
-      is_unique_key_exists   boolean := false;
-      call_old_version       boolean := true;
-   begin
-      --INIT_PARAMETERS;
-      /* СОЗДАЕМ ПАРТИЦИИ НА БУДУЩЕЕ */
-      gen_future_subpartition (p_table_name => p_table_name, p_part_count => new_partitions_count, p_tabspace => p_tabspace);
+      v#job_name := 'IT$$' || p_job_suffix;
 
       begin
-         exchange_subpartitions (p_table_name => p_table_name, p_tabspace => p_tabspace);
-      exception
-         when exc#unique_key_exists
-         then
-            is_unique_key_exists := true;
-      end;
-
-      /* ПЕРЕСТРАИВАЕМ ИНВАЛИДНЫЕ ИНДЕКСЫ */
-      rebuild_indexes (p_table_name => p_table_name, p_tabspace => p_tabspace, call_old_version => call_old_version);
-
-      if is_unique_key_exists
-      then
-         raise exc#unique_key_exists;
-      end if;
-   end table_part_maintenance;
-
-   procedure table_arch_maintenance (p_table_name in varchar2)
-   as
-      is_unique_key_exists   boolean := false;
-      v#def_tbs              varchar2 (30 char);
-      v#high_val             timestamp;
-      v#drop_range           timestamp;
-      v#ddl                  varchar2 (2000 char);
-      v#exchange_table       varchar2 (65 char);
-      v#table_name           varchar2 (65 char);
-      v#str                  varchar2 (32767);
-      log                    sys_manage_partition_log%rowtype;
-   begin
-      select def_tablespace_name || '_ARCH'
-        into v#def_tbs
-        from user_part_tables t
-       where t.table_name = p_table_name;
-
-      if keep_part_online is null
-      then
-         --init_parameters;
-         null;
-      end if;
-
-      v#drop_range := systimestamp - numtodsinterval (keep_part_online, 'DAY');
-
-      for r in (  select tp.table_name, tp.partition_name, tp.partition_position, ts.subpartition_name, ts.subpartition_position, ts.high_value ts_high_value
-                        ,ts.high_value_length ts_high_value_length, tp.high_value tp_high_value, tp.high_value_length tp_high_value_length
-                        , ('ALTER TABLE ' || tp.table_name || ' MOVE ') || nvl2 (ts.subpartition_name, 'SUBPARTITION ' || ts.subpartition_name, 'PARTITION ' || tp.partition_name) || (' TABLESPACE ' || v#def_tbs || ' COMPRESS UPDATE INDEXES PARALLEL ' || to_char (ddl_parallel_degree)) move_ddl
-                        ,nvl2 (ts.subpartition_name, 'S', 'P') section_type
-                    from user_tab_subpartitions ts right join user_tab_partitions tp on tp.table_name = ts.table_name and tp.partition_name = ts.partition_name
-                   where tp.table_name = p_table_name and nvl (ts.tablespace_name, tp.tablespace_name) != v#def_tbs
-                order by ts.subpartition_position)
-      loop
-         if r.section_type = 'S'
-         then
-            v#str := substrc (r.ts_high_value, 1, r.ts_high_value_length);
-         elsif r.section_type = 'P'
-         then
-            v#str := substrc (r.tp_high_value, 1, r.tp_high_value_length);
-         else
-            return;
-         end if;
-
-         begin
-            execute immediate 'SELECT ' || v#str || ' FROM DUAL' into v#high_val;
-         exception
-            when exc#invalid_value
-            then
-               v#high_val := max_date_value;                                                                                                                             -- MAXVALUE
-         end;
-
-         if v#high_val < v#drop_range                                    -- субпартиция на АРХИВАЦИЮ -------------------------------------------------------------------------------
-         then
-            log :=
-               start_log (thread_id      => r.table_name || '.' || r.partition_name || '.' || r.subpartition_name
-                         ,table_name     => r.table_name
-                         ,process_type   => process_type_archivate
-                         ,ddl_exp        => to_clob (r.move_ddl));
-
-            begin
-               ddl_pkg.alter_table (r.move_ddl);
-               stop_log_ok (log);
-               commit;
-            exception
-               when others
-               then
-                  log.ddl_error := sqlerrm;
-                  stop_log_ok (log);
-                  commit;
-            end;
-         end if;
-      end loop;
-   end table_arch_maintenance;
-
-   procedure tables_part_maintenance (p_tabspace in varchar2, p_keep_exchanged in boolean := false)
-   as
-      v#owner   constant varchar2 (30 char) := sys_context ('USERENV', 'CURRENT_SCHEMA');
-      v#block            varchar2 (2000 char);
-   begin
-      --init_parameters;
-
-      for t in get_part_tables
-      loop
-         begin
-            v#block :=
-                  'BEGIN '
-               || (v#owner || '.' || package_name || '.TABLE_PART_MAINTENANCE')
-               || '('
-               || (' P_TABLE_NAME=>''' || t.table_name || '''')
-               || (',P_TABSPACE=>''' || p_tabspace || '''')
-               || ');'
-               || 'END;';
-
-            execute immediate v#block;
-         end;
-      end loop moving;
-   end;
-
-   procedure tables_arch_maintenance
-   as
-      v#owner   constant varchar2 (30 char) := sys_context ('USERENV', 'CURRENT_SCHEMA');
-      v#block            varchar2 (2000 char);
-   begin
-      --init_parameters;
-
-      for t in get_arch_tables
-      loop
-         begin
-            v#block := 'BEGIN ' || (v#owner || '.' || package_name || '.TABLE_ARCH_MAINTENANCE') || '(' || (' P_TABLE_NAME=>''' || t.table_name || '''') || ');' || 'END;';
-
-            execute immediate v#block;
-         end;
-      end loop moving;
-   end;
-
-   procedure gen_part_jobs (p_tabspace in varchar2 default '')
-   as
-      v#owner   constant varchar2 (30 char) := sys_context ('USERENV', 'CURRENT_SCHEMA');
-      v#job_name         varchar2 (65 char);
-      v#job_prefix       varchar2 (30 char);
-      v#start_date       timestamp := systimestamp + interval '3' minute;
-      v#end_date         timestamp := trunc (systimestamp, 'DD') + interval '1' day + interval '7' hour;
-      v#block_start      varchar2 (2000 char);
-      v#block_end        varchar2 (2000 char);
-      v#job_priority     binary_integer;
-      v#job_comment      varchar2 (200 char);
-   begin
-      v#block_start := 'BEGIN ';
-      v#block_end := ' END;';
-      v#job_priority := 3;
-      v#job_comment := 'Система автоматизированного секционирования ';
-      --init_parameters;
-
-      for t in get_part_tables
-      loop
-         v#job_prefix := 'MPJ' || to_char (t.rn, 'FM09') || '$';
-         v#job_name := v#owner || '.' || v#job_prefix || substr (t.table_name, 1, 30 - length (v#job_prefix));
-
-         begin
-            DBMS_SCHEDULER.drop_job (job_name => v#job_name, force => true);
-         exception
-            when exc#job_doesnot_exists
-            then
-               null;
-         end;
-
-         v#start_date := systimestamp + numtodsinterval (t.rn * 1, 'MINUTE');
-
-         begin
-            DBMS_SCHEDULER.create_job (
-               job_name     => v#job_name
-              ,start_date   => v#start_date
-              ,                                            -------------------------------------------------------------------------------------------------------------------------
-               end_date     => v#end_date
-              ,job_class    => 'DEFAULT_JOB_CLASS'
-              ,job_type     => 'PLSQL_BLOCK'
-              ,job_action   =>    v#block_start
-                               || (v#owner || '.' || package_name || '.TABLE_PART_MAINTENANCE')
-                               || '('
-                               || (' p_table_name=>''' || t.table_name || '''')
-                               || (',p_tabspace=>''' || p_tabspace || '''')
-                               || ');'
-                               || v#block_end
-              ,comments     => v#job_comment || t.table_name
-              ,auto_drop    => false
-              ,enabled      => true);
-            DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'RESTARTABLE', value => false);
-            DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'JOB_PRIORITY', value => v#job_priority);
-            DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'MAX_RUNS', value => 1);
-         exception
-            when exc#job_allready_exists
-            then
-               null;
-         end;
-      end loop;
-   end;
-
-   procedure gen_arch_jobs (p_tabspace in varchar2)
-   as
-      v#owner   constant varchar2 (30 char) := sys_context ('USERENV', 'CURRENT_SCHEMA');
-      v#job_name         varchar2 (65 char);
-      v#job_prefix       varchar2 (30 char);
-      v#start_date       timestamp := systimestamp + interval '3' minute;
-      v#end_date         timestamp := trunc (systimestamp, 'DD') + interval '1' day + interval '7' hour;
-      v#block_start      varchar2 (2000 char);
-      v#block_end        varchar2 (2000 char);
-      v#job_priority     binary_integer;
-      v#job_comment      varchar2 (200 char);
-   begin
-      v#block_start := 'BEGIN ';
-      v#block_end := ' END;';
-      v#job_priority := 3;
-      v#job_comment := 'Система автоматизированного архивирования ';
-
-      for t in get_arch_tables
-      loop
-         v#job_prefix := 'APJ' || to_char (t.rn, 'FM09') || '$';
-         v#job_name := v#owner || '.' || v#job_prefix || substr (t.table_name, 1, 30 - length (v#job_prefix));
-
-         begin
-            DBMS_SCHEDULER.drop_job (job_name => v#job_name, force => true);
-         exception
-            when exc#job_doesnot_exists
-            then
-               null;
-         end;
-
-         v#start_date := systimestamp + numtodsinterval (t.rn * 1, 'MINUTE');
-
-         begin
-            DBMS_SCHEDULER.create_job (
-               job_name     => v#job_name
-              ,start_date   => v#start_date
-              ,                                            -------------------------------------------------------------------------------------------------------------------------
-               end_date     => v#end_date
-              ,job_class    => 'DEFAULT_JOB_CLASS'
-              ,job_type     => 'PLSQL_BLOCK'
-              ,job_action   =>    v#block_start
-                               || (v#owner || '.' || package_name || '.TABLE_ARCH_MAINTENANCE')
-                               || '('
-                               || (' p_table_name=>''' || t.table_name || '''')
-                               || ');'
-                               || v#block_end
-              ,comments     => v#job_comment || t.table_name
-              ,auto_drop    => false);
-            DBMS_SCHEDULER.enable (name => v#job_name);
-            DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'RESTARTABLE', value => false);
-            DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'JOB_PRIORITY', value => v#job_priority);
-            DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'MAX_RUNS', value => 1);
-         exception
-            when exc#job_allready_exists
-            then
-               null;
-         end;
-      end loop;
-   end gen_arch_jobs;
-
-   procedure gen_part_generator
-   as
-   begin
-      --init_parameters;
-
-      begin
-         DBMS_SCHEDULER.create_schedule (
-            schedule_name     => clean_ddl_schedule
-           ,start_date        => trunc (systimestamp, 'DD') + interval '22' hour
-           ,repeat_interval   => 'FREQ=MONTHLY; BYDAY=1SAT; BYHOUR=22; BYMINUTE=0'
-           ,end_date          => null
-           ,comments          =>    'Система автоматизированного добавления повременных секций в таблицы БД АС Сверка.'
-                                 || chr (10)
-                                 || 'ЗАО Ай-Теко, 2013, версия '
-                                 || package_version);
-      exception
-         when exc#job_allready_exists
-         then
-            null;
-      end;
-
-      begin
-         DBMS_SCHEDULER.drop_job (job_name => part_job_generator, force => false);
+         DBMS_SCHEDULER.drop_job (job_name => v#job_name, force => true);
       exception
          when exc#job_doesnot_exists
          then
@@ -976,167 +1062,245 @@ is
       end;
 
       DBMS_SCHEDULER.create_job (
-         job_name        => part_job_generator
-        ,schedule_name   => clean_ddl_schedule
-        ,job_class       => 'DEFAULT_JOB_CLASS'
-        ,job_type        => 'PLSQL_BLOCK'
-        ,job_action      => package_name || '.GEN_PART_JOBS;'
-        ,auto_drop       => false
-        ,comments        =>    'Система автоматизированного секционирования БД АС Сверка.'
-                            || chr (10)
-                            || 'ЗАО Ай-Теко, 2013, версия '
-                            || package_version);
-      DBMS_SCHEDULER.set_attribute (name => part_job_generator, attribute => 'RESTARTABLE', value => false);
-      DBMS_SCHEDULER.set_attribute_null (name => part_job_generator, attribute => 'MAX_FAILURES');
-      DBMS_SCHEDULER.set_attribute_null (name => part_job_generator, attribute => 'MAX_RUNS');
-      DBMS_SCHEDULER.set_attribute (name => part_job_generator, attribute => 'STOP_ON_WINDOW_CLOSE', value => false);
-      DBMS_SCHEDULER.set_attribute (name => part_job_generator, attribute => 'JOB_PRIORITY', value => 3);
-      DBMS_SCHEDULER.set_attribute_null (name => part_job_generator, attribute => 'SCHEDULE_LIMIT');
-      DBMS_SCHEDULER.set_attribute (name => part_job_generator, attribute => 'LOGGING_LEVEL', value => DBMS_SCHEDULER.logging_full);
-      DBMS_SCHEDULER.disable (name => part_job_generator);
-   end gen_part_generator;
-
-   procedure gen_arch_generator
-   as
-   begin
-      --init_parameters;
-
-      begin
-         DBMS_SCHEDULER.create_schedule (
-            schedule_name     => arch_ddl_schedule
-           ,start_date        => trunc (systimestamp, 'DD') + interval '22' hour
-           ,repeat_interval   => 'FREQ=MONTHLY; BYDAY=2SAT; BYHOUR=22; BYMINUTE=0'
-           ,end_date          => null
-           ,comments          =>    'Система автоматизированного перемещения устаревших секций в архив.'
-                                 || chr (10)
-                                 || 'ЗАО Ай-Теко, 2013, версия '
-                                 || package_version);
-      exception
-         when exc#job_allready_exists
-         then
-            null;
-      end;
-
-      begin
-         DBMS_SCHEDULER.drop_job (job_name => arch_job_generator, force => false);
-      exception
-         when exc#job_doesnot_exists
-         then
-            null;
-      end;
-
-      DBMS_SCHEDULER.create_job (
-         job_name        => arch_job_generator
-        ,schedule_name   => arch_ddl_schedule
-        ,job_class       => 'DEFAULT_JOB_CLASS'
-        ,job_type        => 'PLSQL_BLOCK'
-        ,job_action      => package_name || '.GEN_ARCH_JOBS;'
-        ,auto_drop       => false
-        ,comments        =>    'Система автоматизированного архивирования БД АС Сверка.'
-                            || chr (10)
-                            || 'ЗАО Ай-Теко, 2013, версия '
-                            || package_version);
-      DBMS_SCHEDULER.set_attribute (name => arch_job_generator, attribute => 'RESTARTABLE', value => false);
-      DBMS_SCHEDULER.set_attribute_null (name => arch_job_generator, attribute => 'MAX_FAILURES');
-      DBMS_SCHEDULER.set_attribute_null (name => arch_job_generator, attribute => 'MAX_RUNS');
-      DBMS_SCHEDULER.set_attribute (name => arch_job_generator, attribute => 'STOP_ON_WINDOW_CLOSE', value => false);
-      DBMS_SCHEDULER.set_attribute (name => arch_job_generator, attribute => 'JOB_PRIORITY', value => 3);
-      DBMS_SCHEDULER.set_attribute_null (name => arch_job_generator, attribute => 'SCHEDULE_LIMIT');
-      DBMS_SCHEDULER.set_attribute (name => arch_job_generator, attribute => 'LOGGING_LEVEL', value => DBMS_SCHEDULER.logging_full);
-      DBMS_SCHEDULER.enable (name => arch_job_generator);
-   end gen_arch_generator;
-
-   /* Функция проверки наличия unusable-индексов */
-   function check_unusable_indexes
-      return varchar2
-   as
-      r         get_unusable_indexes%rowtype;
-      ret_val   varchar2 (100 char);
-   begin
-      open get_unusable_indexes (p_table_name => null, p_tabspace => null);
-
-      loop
-         fetch get_unusable_indexes into r;
-
-         ret_val := unusable_indexes_dont_exists;
-         exit when get_unusable_indexes%notfound;
-         ret_val := unusable_indexes_exists;
-         exit;
-      end loop;
-
-      close get_unusable_indexes;
-
-      return ret_val;
+         job_name     => v#job_name
+        ,start_date   => systimestamp
+        ,end_date     => trunc (systimestamp, 'DD') + interval '1' day + interval '7' hour
+        ,job_class    => 'DEFAULT_JOB_CLASS'
+        ,job_type     => 'PLSQL_BLOCK'
+        ,job_action   => p_job_action
+        ,comments     =>    'ЗАО Ай-Теко, 2015'
+                         || chr (10)
+                         || 'Самоудаляемое задание для наполнения промежуточных таблиц для задач нагрузочного тестирования.'
+        ,auto_drop    => true
+        ,enabled      => false);
+      DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'RESTARTABLE', value => false);
+      DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'JOB_PRIORITY', value => 3);
+      DBMS_SCHEDULER.set_attribute (name => v#job_name, attribute => 'MAX_RUNS', value => 1);
+      DBMS_SCHEDULER.enable (name => v#job_name);
+      ddl_pkg.info (
+            'Самоудаляемое задание '
+         || v#job_name
+         || ' для наполнения промежуточных таблиц для задач нагрузочного тестирования.');
    end;
 
-   /* Процедура добавляет партиции по всем тербанкам. В каждой партиции 1 субпартиция по умолчанию (MAXVALUE)*/
-   procedure prc_create_partitions_by_tb (p_first_date date, p_tablespace varchar2)
-   is
-      r        get_tables_bank_codes%rowtype;
-      minval   timestamp;
+   procedure enlarge (p_step number, p_tablespace varchar2)
+   as
+      prev_imax       number := 0;
+
+      pk              varchar2 (4000);
+      tot_pk          varchar2 (4000);
+      col_list        varchar2 (4000);
+      val_list        varchar2 (4000);
+      cdml            varchar2 (4000);
+      src_bank_code   varchar2 (2 char);
    begin
-      minval := systimestamp - interval '1' year;
+      DBMS_OUTPUT.enable (10000000);
 
-      open get_tables_bank_codes;
+      begin
+         select to_char (bank_code)
+           into src_bank_code
+           from it$$bank_code bc
+          where bc.is_process = 1 and bc.last_ok_step < p_step and is_source = 1;
+      exception
+         when others
+         then
+            raise_application_error (-20000, 'Невозможно определить код банка источника!');
+      end;
 
+      for b in (select *
+                  from it$$bank_code bc
+                 where bc.is_process = 1 and bc.last_ok_step < p_step and is_source is null)
       loop
-         fetch get_tables_bank_codes into r;
+         prev_imax := it$$utl.get_max;
+         it$$utl.trn (p_step, p_tablespace);
+         prev_imax := trunc (prev_imax, -7) + power (10, 7);
+         it$$utl.pl ('Самое максимальное значение ' || to_char (prev_imax));
 
-         exit when get_tables_bank_codes%notfound;
-         add_modify_split_partition (p_table_name             => r.table_name
-                                    ,p_bank_code              => r.bc
-                                    ,p_part_values_list       => r.bc
-                                    ,p_subpart_values_range   => null                               -- NULL - будет добавлена субпартиция по умолчанию------------------------------
-                                    ,p_tabspace               => p_tablespace);
-         /*  Делаем субпартицию, в которую заносим совсем старые данные старше года ------------*/
-         add_modify_split_partition (p_table_name             => r.table_name
-                                    ,p_bank_code              => r.bc
-                                    ,p_part_values_list       => r.bc
-                                    ,p_subpart_values_range   => minval
-                                    ,p_tabspace               => p_tablespace);
-      end loop;
-
-      close get_tables_bank_codes;
-   /* Все необработанные исключения передаем наверх */
-   end;
-
-   procedure prc_create_subpart_to_date (p_date_end date, p_tablespace varchar2)
-   is
-      r        get_tables_bank_codes%rowtype;
-      minval   timestamp;
-   begin
-      open get_tables_bank_codes;
-
-      loop
-         fetch get_tables_bank_codes into r;
-
-         exit when get_tables_bank_codes%notfound;
-
-         for d in (    select systimestamp - interval '12' month + numtodsinterval (level, 'DAY') cd
-                         from dual
-                   connect by systimestamp - interval '12' month + numtodsinterval (level, 'DAY') <= systimestamp + interval '30' day)
+         /* напилим заданий по копированию таблиц */
+         for t in (select *
+                     from it$$dup_tables j)
          loop
-            add_modify_split_partition (p_table_name             => r.table_name
-                                       ,p_bank_code              => r.bc
-                                       ,p_part_values_list       => r.bc
-                                       ,p_subpart_values_range   => d.cd                                                                   -- будет добавлена субпартиция с границей
-                                       ,p_tabspace               => p_tablespace);
+            cdml := 'INSERT /*+ APPEND */ INTO ' || t.tmp_tbl_name || ' (';
+            col_list := '';
+            val_list := '';
+
+            for c in (  select tc.table_name, tc.column_id rn, row_number () over (partition by tc.table_name order by tc.column_id desc) drn, tc.column_name
+                              ,case when t.cn like '%,' || tc.column_name || ',%' then '+' || to_char (prev_imax) else '' end diff
+                          from user_tab_columns tc
+                         where tc.table_name = t.orig_tbl_name
+                      order by tc.table_name, tc.column_id)
+            loop
+               col_list := col_list || case when c.rn != 1 then ',' end || '"' || c.column_name || '"';
+               val_list :=
+                     val_list
+                  || case when c.rn != 1 then ',' end
+                  || case when c.column_name = 'BANK_CODE' then '''' || to_char (b.bank_code) || '''' else '"' || c.column_name || '"' || c.diff end;
+            end loop;
+
+            cdml := cdml || col_list || ') SELECT ' || val_list || ' FROM ' || t.orig_tbl_name || ' WHERE BANK_CODE=''' || src_bank_code || ''';' || 'COMMIT;';
+            gen_job (p_job_suffix => t.orig_tbl_name, p_job_action => cdml);
+         end loop;
+
+         -- Точка синхронизации
+         it$$utl.sync;
+         it$$utl.exch_part (p_bank_code => b.bank_code);
+
+         -- Дошли до сюда - профит! ТБ обработан!
+         update it$$bank_code t
+            set t.last_ok_step = p_step
+          where is_process = 1 and (last_ok_step < p_step) and t.bank_code = b.bank_code;
+
+         commit;
+      end loop;
+   end;
+
+   /**
+    p_step   - номер шага
+    p_ratio  - коэффициент размножения в банке-источнике. От 2 до 10..20
+   */
+   procedure enlarge_source (p_step number, p_ratio number, p_tablespace varchar2)
+   as
+      prev_imax       number := 0;
+      col_list        varchar2 (4000);
+      val_list        varchar2 (4000);
+      sel_list        varchar2 (4000);
+      cdml            clob;
+      into_table      varchar2 (100);
+      src_bank_code   varchar2 (2 char);
+      proc_name       varchar2 (61 char);
+   begin
+      DBMS_OUTPUT.enable (10000000);
+
+      if p_ratio is null or p_ratio < 2
+      then
+         return;
+      end if;
+
+      begin
+         select to_char (bank_code)
+           into src_bank_code
+           from it$$bank_code bc
+          where bc.is_process = 1 and is_source = 1;
+      exception
+         when others
+         then
+            raise_application_error (-20000, 'Невозможно определить код банка источника!');
+      end;
+
+      prev_imax := it$$utl.get_max;
+      it$$utl.trn (p_step, p_tablespace);
+      prev_imax := trunc (prev_imax, -7) + power (10, 7);
+      it$$utl.pl ('Самое максимальное значение ' || to_char (prev_imax));
+
+      /* напилим заданий по копированию таблиц */
+      for t in (select *
+                  from it$$dup_tables j)
+      loop
+         declare
+            i   number;
+         begin
+            execute immediate 'select count(*) from ' || t.orig_tbl_name || ' where bank_code=:a' into i using src_bank_code;
+
+            update it$$dup_tables dt
+               set ini_99_count = i
+             where dt.orig_tbl_name = t.orig_tbl_name;
+         end;
+
+         DBMS_LOB.createtemporary (lob_loc => cdml, cache => true);
+
+         into_table := ' INTO ' || t.tmp_tbl_name;
+         col_list := '';
+         val_list := '';
+         sel_list := '';
+
+         -- коэффициент
+         for c in (  select tc.table_name, tc.column_id rn, row_number () over (partition by tc.table_name order by tc.column_id desc) drn, tc.column_name
+                           ,case when t.cn like '%,' || tc.column_name || ',%' then '+<RATIO_STEP>*' || to_char (prev_imax) when tc.column_name = t.date_col then '+<RATIO_STEP>*to_dsinterval(''' || to_char (t.date_diff) || ''')' else '' end diff
+                       from user_tab_columns tc
+                      where tc.table_name = t.orig_tbl_name
+                   order by tc.table_name, tc.column_id)
+         loop
+            col_list := col_list || case when c.rn != 1 then ',' end || '"' || c.column_name || '"';
+            sel_list := sel_list || case when c.rn != 1 then ',' end || '"' || c.column_name || '"';
+            val_list := val_list || case when c.rn != 1 then ',' end || '"' || c.column_name || '"' || c.diff;
+         end loop;
+
+         col_list := into_table || ' (' || col_list || ') values (';
+         val_list := val_list || ') ';
+         sel_list := ' SELECT ' || sel_list || ' FROM ' || t.orig_tbl_name || ' WHERE BANK_CODE=''' || src_bank_code || ''';' || 'COMMIT;';
+         proc_name := sys_context ('userenv', 'current_schema') || '.itp$' || t.orig_tbl_name;
+
+         DBMS_LOB.append (dest_lob => cdml, src_lob => to_clob ('create or replace procedure ' || proc_name || ' as begin insert all '));
+
+         for i in 0 .. p_ratio
+         loop
+            DBMS_LOB.append (dest_lob => cdml, src_lob => to_clob (col_list || replace (val_list, '<RATIO_STEP>', to_char (i))));
+         end loop;
+
+         DBMS_LOB.append (dest_lob => cdml, src_lob => to_clob (sel_list || ' end;'));
+
+         execute immediate cdml;
+
+         ddl_pkg.info ('Создана процедура ' || proc_name);
+         wl (p_step        => 1
+            ,p_bank_code   => src_bank_code
+            ,p_tbl         => t.orig_tbl_name
+            ,p_ddl         => cdml
+            ,p_err         => null);
+         DBMS_LOB.freetemporary (lob_loc => cdml);
+         gen_job (p_job_suffix => t.orig_tbl_name, p_job_action => 'begin ' || proc_name || '; execute immediate ''drop procedure ' || proc_name || '''; end;');
+      end loop;
+
+      -- Точка синхронизации
+      it$$utl.sync;
+      it$$utl.exch_part (p_bank_code => src_bank_code);
+      commit;
+   end;
+
+   procedure split_part (p_step it$$step.step_no%type, p_tablespace varchar2)
+   as
+   begin
+      -- сплитим все банки, независимо от распучивания.
+      for b in (select *
+                  from it$$bank_code bc)
+      loop
+         for d in (with p
+                        as (select cast (min (trans_date) as date) min_d, least (cast (max (trans_date) as date), sysdate) max_d
+                              from incident odi
+                             where odi.bank_code = b.bank_code)
+                       ,p1
+                        as (    select min_d + level - 1 d
+                                  from p
+                            connect by level <= max_d - min_d)
+                     select d
+                       from p1
+                   order by d)
+         loop
+            for t in (select * from it$$dup_tables)
+            loop
+               begin
+                  it$$utl2.add_modify_split_partition (p_table_name             => t.orig_tbl_name
+                                                    ,p_bank_code              => b.bank_code
+                                                    ,p_part_values_list       => b.bank_code
+                                                    ,p_subpart_values_range   => d.d
+                                                    ,p_tabspace               => p_tablespace);
+                  wl (p_step
+                     ,b.bank_code
+                     ,t.orig_tbl_name
+                     ,'split subpartition at ' || to_char (d.d, 'yyyy-mm-dd')
+                     ,null);
+               exception
+                  when others
+                  then
+                     wl (p_step
+                        ,b.bank_code
+                        ,t.orig_tbl_name
+                        ,'split subpartition at ' || to_char (d.d, 'yyyy-mm-dd')
+                        ,sqlerrm);
+               end;
+            end loop;
          end loop;
       end loop;
-
-      close get_tables_bank_codes;
-   /* Все необработанные исключения передаем наверх */
    end;
-
-   procedure test_p
-   as
-   begin
-      add_modify_split_partition (p_table_name             => 'INC_DOC_PRINT'
-                                 ,p_bank_code              => '90'
-                                 ,p_part_values_list       => '90'
-                                 ,p_subpart_values_range   => null                                                                       --TO_TIMESTAMP ('2009-01-01', 'yyyy-mm-dd')
-                                 ,p_tabspace               => 'USERS');
-      null;
-   end;
-end pkg_mp;
+end;
 /
