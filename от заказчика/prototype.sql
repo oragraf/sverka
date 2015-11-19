@@ -1,4 +1,4 @@
-define p_base_day= "date'2015-01-01'"
+define p_base_day= "to_timestamp(date'2015-01-01')"
 
 drop table incident cascade constraints purge;
 drop table map$t cascade constraints purge;
@@ -14,10 +14,10 @@ create table incident
 insert into incident( trans_date
                     , bank_code
                      )
-      select sysdate + level / 24
+      select systimestamp + numtodsinterval(level / 24,'day')
            , '99'
         from dual
-  connect by level <= 48;
+  connect by level <= 150;
 
 create table map$t
 (
@@ -29,10 +29,10 @@ create table map$t
 
 
 declare
-  v_dt_start           date;
-  v_previous_date      date;
+  v_dt_start           timestamp;
+  v_previous_date      timestamp;
   v_cntday             number := 0;
-  p_max_count_rec_day  number := 3;
+  p_max_count_rec_day  number := 7;
   v_np                 number := 0;
 begin
   for rec in (  select trans_date
@@ -86,7 +86,7 @@ end;
 
 update incident
    set new_trans_date =
-         ( select &&p_base_day. + np
+         ( select &&p_base_day. + numtodsinterval(np,'day') + (incident.trans_date - trunc(incident.trans_date,'DD'))
              from map$t
             where incident.trans_date between dt_start and dt_end );
 
