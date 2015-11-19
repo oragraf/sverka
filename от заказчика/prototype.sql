@@ -8,6 +8,8 @@ create table incident
   trans_date      timestamp
 , bank_code       varchar2( 2 char )
 , new_trans_date  timestamp
+, grp             number
+, new_grp         number
 )
 ;
 
@@ -85,9 +87,14 @@ end;
 /
 
 update incident
-   set new_trans_date =
-         ( select &&p_base_day. + numtodsinterval(np,'day') + (incident.trans_date - trunc(incident.trans_date,'DD'))
+   set (new_trans_date, grp) =
+         ( select &&p_base_day. + numtodsinterval(np,'day') + (incident.trans_date - trunc(incident.trans_date,'DD')), np
              from map$t
             where incident.trans_date between dt_start and dt_end );
 
+--update incident
+--   set new_grp =
+--         ( select &&p_base_day. + numtodsinterval(np,'day') + (incident.trans_date - trunc(incident.trans_date,'DD'))
+--             from map$t
+--            where incident.trans_date between dt_start and dt_end );
 commit;
