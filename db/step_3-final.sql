@@ -1,6 +1,6 @@
 prompt Перекидывание счетчиков в актуальные значения, соответствующие загруженным данным
 ----------------------------------------------
-define script_step='2'
+define script_step='3'
 define script_name='final'
 define script_full_name='step_&&SCRIPT_STEP.-&&SCRIPT_NAME.'
 define script_desc='Скрипт перекидывает сиквенсы в актуальные значения. Запускается один раз на все тербанки.'

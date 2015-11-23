@@ -765,6 +765,8 @@ as
    procedure rebuild_indexes;
 
    procedure split_part (p_step it$$step.step_no%type, p_tablespace varchar2);
+   
+   procedure gen_job (p_job_suffix varchar2, p_job_action varchar2);
 end;
 /
 
